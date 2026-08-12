@@ -1,0 +1,48 @@
+# ===========================================================================
+#  Log Activity API
+#  Semua request diarahkan ke index.php.
+# ===========================================================================
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Sebagian shared hosting menjalankan PHP sebagai CGI/FastCGI dan membuang
+    # header Authorization sebelum sampai ke PHP. Dua baris ini meneruskannya
+    # kembali. Tanpa ini, semua request akan dijawab 401 walau tokennya benar.
+    RewriteCond %{HTTP:Authorization} ^(.+)$
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%1]
+
+    # File dan folder yang benar-benar ada tetap dilayani apa adanya,
+    # selebihnya masuk ke index.php.
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^ index.php [QSA,L]
+</IfModule>
+
+# Cadangan untuk server yang tidak memakai mod_rewrite.
+<IfModule !mod_rewrite.c>
+    <IfModule mod_setenvif.c>
+        SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
+    </IfModule>
+</IfModule>
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set Referrer-Policy "no-referrer"
+</IfModule>
+
+# Jangan pernah menampilkan daftar isi folder.
+Options -Indexes
+
+# File konfigurasi tidak boleh terbaca lewat browser, walaupun secara tidak
+# sengaja tersalin ke folder ini.
+<FilesMatch "^\.env|composer\.(json|lock)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>

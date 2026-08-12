@@ -1,0 +1,7 @@
+node_modules/
+.env
+firebase/serviceAccountKey.json
+*serviceAccount*.json
+.migration-state.json
+reports/
+*.log

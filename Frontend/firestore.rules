@@ -1,0 +1,71 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return request.auth.uid == userId; }
+    function isAdmin() { 
+      return isSignedIn() && (
+        request.auth.token.email == 'leahcimtwis@gmail.com' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+    
+    // User Profiles
+    match /users/{userId} {
+      // Allow users to read their own data
+      allow read: if isSignedIn(); // anyone can read users for display right now
+      
+      // Allow user to create their own profile during registration
+      allow create: if isOwner(userId)
+                    && request.resource.data.keys().hasAll(['id', 'email', 'name', 'role'])
+                    && request.resource.data.id == userId
+                    && (request.resource.data.role == 'karyawan' || (request.resource.data.role == 'admin' && request.auth.token.email == 'leahcimtwis@gmail.com') || request.resource.data.role == 'atasan')
+                    && request.resource.data.email == request.auth.token.email;
+
+      // Allow owner or admin to update
+      allow update: if (isOwner(userId) || isAdmin())
+                    && request.resource.data.id == resource.data.id // Cannot change id
+                    && request.resource.data.email == resource.data.email // Cannot change email
+                    && (resource.data.email != 'leahcimtwis@gmail.com' || request.auth.token.email == 'leahcimtwis@gmail.com'); // Super admin cannot be modified by others
+                    
+      allow delete: if isAdmin() && resource.data.email != 'leahcimtwis@gmail.com';
+    }
+    // Audit Logs
+    match /audit_logs/{id} {
+      allow read: if isAdmin();
+      allow create: if isSignedIn()
+                    && request.resource.data.keys().hasAll(['id', 'timestamp', 'userId', 'userName', 'action'])
+                    && request.resource.data.userId == request.auth.uid;
+    }
+    
+    // Tech Logs Activity
+    match /tech_logs/{logId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+                    && request.resource.data.keys().hasAll(['id', 'tanggal', 'nama_technician', 'nik', 'supervisor', 'shift', 'deskripsi_pekerjaan', 'kategori_code', 'start_time', 'finish_time', 'duration_minutes', 'status']);
+      allow update, delete: if isSignedIn(); 
+    }
+    
+    // Bug Reports
+    match /tech_bug_reports/{bugId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn()
+                    && request.resource.data.keys().hasAll(['id', 'userId', 'userName', 'role', 'title', 'description', 'status', 'timestamp']);
+      allow update: if isAdmin();
+    }
+    
+    // System Settings
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}

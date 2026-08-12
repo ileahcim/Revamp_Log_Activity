@@ -1,0 +1,10 @@
+vendor/
+.env
+.env.local
+storage/logs/*
+storage/cache/*
+storage/settings.json
+!storage/logs/.gitkeep
+!storage/cache/.gitkeep
+*.log
+.DS_Store

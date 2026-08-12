@@ -1,0 +1,23 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile containing name, email, NIK and role.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "nik": { "type": "string" },
+        "role": { "type": "string", "enum": ["karyawan", "atasan", "admin"] }
+      },
+      "required": ["id", "email", "name", "role", "nik"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles by Google Auth UID"
+    }
+  }
+}

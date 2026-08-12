@@ -1,0 +1,25 @@
+{
+  "name": "logactivity-migration",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Migration Tool sekali pakai: Firebase Firestore -> MariaDB (Log Activity, Database LOCK V1.0)",
+  "main": "migrate.js",
+  "scripts": {
+    "migrate": "node migrate.js",
+    "dry": "node migrate.js --dry-run",
+    "verify": "node migrate.js --verify",
+    "check": "node migrate.js --check",
+    "test": "node tests/run.js",
+    "inspect:schema": "node tools/inspect-schema.js",
+    "inspect:firestore": "node tools/inspect-firestore.js",
+    "check:nik": "node tools/check-duplicate-nik.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "firebase-admin": "^13.0.2",
+    "mysql2": "^3.12.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
