@@ -11,9 +11,14 @@ declare(strict_types=1);
  *
  * Susunan middleware per route:
  *
- *     $auth       token wajib sah          -> menempelkan uid + baris user
- *     $terdaftar  wajib punya baris users  -> role apa pun boleh
- *     $admin      wajib punya baris users  -> hanya role admin
+ *     $auth        token wajib sah          -> menempelkan uid + baris user
+ *     $terdaftar   wajib punya baris users  -> role apa pun boleh
+ *     $admin       wajib punya baris users  -> hanya role admin
+ *     $superAdmin  wajib punya baris users  -> emailnya harus super admin
+ *
+ * $superAdmin sengaja dipasang SENDIRIAN, tidak ditumpuk di atas $admin.
+ * Menumpuknya akan membuat super admin yang users.role-nya sempat diubah orang
+ * lain ikut tertolak -- padahal justru dialah yang harus bisa membetulkannya.
  */
 
 use App\Config\Env;
@@ -21,14 +26,23 @@ use App\Controllers\AuditLogController;
 use App\Controllers\AuthController;
 use App\Controllers\BugReportController;
 use App\Controllers\MasterController;
+use App\Controllers\RegistrationController;
 use App\Controllers\SettingController;
+use App\Controllers\SuperAdminController;
 use App\Controllers\TechLogController;
 use App\Controllers\UserController;
 use App\Helpers\ApiResponse;
+use App\Helpers\Audit;
 use App\Helpers\FirebaseToken;
+use App\Helpers\JsonStore;
+use App\Helpers\NikAllowlist;
+use App\Helpers\RegistrationPolicy;
+use App\Helpers\RegistrationStore;
 use App\Helpers\Settings;
+use App\Helpers\SuperAdmins;
 use App\Middleware\AuthMiddleware;
 use App\Middleware\RoleMiddleware;
+use App\Middleware\SuperAdminMiddleware;
 use App\Models\AuditLogModel;
 use App\Models\BugReportModel;
 use App\Models\MasterModel;
@@ -50,6 +64,16 @@ return static function (App $app, string $appRoot): void {
 
     $settings = new Settings($appRoot . '/storage/settings.json');
 
+    // Tiga hal yang tidak punya tempat di schema V1.0 yang dikunci: antrean
+    // pendaftaran, daftar izin NIK, dan daftar super admin. Masing-masing satu
+    // berkas JSON di storage/. Alasan lengkapnya ada di docblock tiap kelas.
+    $registrations = new RegistrationStore(new JsonStore($appRoot . '/storage/registrations.json'));
+    $nikAllowlist  = new NikAllowlist(new JsonStore($appRoot . '/storage/allowed-niks.json'));
+    $superAdmins   = new SuperAdmins(new JsonStore($appRoot . '/storage/super-admins.json'));
+
+    $policy = new RegistrationPolicy($users, $techLogs, $nikAllowlist, $registrations);
+    $audit  = new Audit($auditLogs);
+
     $auth = new AuthMiddleware(
         new FirebaseToken(
             (string) Env::get('FIREBASE_PROJECT_ID', ''),
@@ -59,8 +83,9 @@ return static function (App $app, string $appRoot): void {
         $responseFactory
     );
 
-    $terdaftar = new RoleMiddleware([], $responseFactory);
-    $admin     = new RoleMiddleware(['admin'], $responseFactory);
+    $terdaftar  = new RoleMiddleware([], $responseFactory, $registrations);
+    $admin      = new RoleMiddleware(['admin'], $responseFactory, $registrations);
+    $superAdmin = new SuperAdminMiddleware($superAdmins, $responseFactory);
 
     // -----------------------------------------------------------------------
     // Tanpa autentikasi
@@ -91,29 +116,77 @@ return static function (App $app, string $appRoot): void {
         $bugReports,
         $auditLogs,
         $settings,
+        $registrations,
+        $nikAllowlist,
+        $superAdmins,
+        $policy,
+        $audit,
         $terdaftar,
-        $admin
+        $admin,
+        $superAdmin
     ): void {
         // ---------------------------------------------------------------
         // Login & pendaftaran
         //
-        // Dua route pertama sengaja hanya dijaga $auth, tanpa $terdaftar.
+        // Tiga route pertama sengaja hanya dijaga $auth, tanpa $terdaftar.
         // User yang baru pertama kali login belum punya baris di tabel
         // users; kalau $terdaftar dipasang, dia akan ditolak 403 dan tidak
         // akan pernah bisa mendaftar.
+        //
+        // /auth/status juga di sini, dan itu disengaja: pendaftar yang sedang
+        // menunggu persetujuan tidak punya baris users, jadi tidak ada
+        // endpoint ber-$terdaftar yang bisa dia panggil. Ini satu-satunya
+        // tempat dia bisa melihat statusnya sendiri -- dan yang dikirim
+        // hanya permintaannya sendiri, tidak ada data orang lain.
         // ---------------------------------------------------------------
 
-        $authController = new AuthController($users, $master);
+        $authController = new AuthController($users, $master, $registrations, $policy, $superAdmins);
 
         $group->post('/auth/sync', [$authController, 'sync']);
         $group->post('/auth/register', [$authController, 'register']);
+        $group->get('/auth/status', [$authController, 'status']);
         $group->get('/auth/me', [$authController, 'me'])->add($terdaftar);
+
+        // ---------------------------------------------------------------
+        // Antrean pendaftaran & daftar izin NIK — khusus admin
+        // ---------------------------------------------------------------
+
+        $registrationController = new RegistrationController(
+            $registrations,
+            $nikAllowlist,
+            $policy,
+            $users,
+            $master,
+            $audit
+        );
+
+        $group->get('/registrations', [$registrationController, 'index'])->add($admin);
+        $group->post('/registrations/{uid}/approve', [$registrationController, 'approve'])->add($admin);
+        $group->post('/registrations/{uid}/reject', [$registrationController, 'reject'])->add($admin);
+
+        // Menghapus catatan penolakan, supaya yang bersangkutan boleh
+        // mendaftar lagi. Bukan menghapus user.
+        $group->delete('/registrations/{uid}', [$registrationController, 'forget'])->add($admin);
+
+        $group->get('/allowed-niks', [$registrationController, 'allowedNiks'])->add($admin);
+        $group->post('/allowed-niks', [$registrationController, 'addAllowedNik'])->add($admin);
+        $group->delete('/allowed-niks/{nik}', [$registrationController, 'removeAllowedNik'])->add($admin);
+
+        // ---------------------------------------------------------------
+        // Super admin — khusus super admin
+        // ---------------------------------------------------------------
+
+        $superAdminController = new SuperAdminController($superAdmins, $users, $audit);
+
+        $group->get('/super-admins', [$superAdminController, 'index'])->add($superAdmin);
+        $group->post('/super-admins', [$superAdminController, 'promote'])->add($superAdmin);
+        $group->delete('/super-admins/{email}', [$superAdminController, 'demote'])->add($superAdmin);
 
         // ---------------------------------------------------------------
         // Users
         // ---------------------------------------------------------------
 
-        $userController = new UserController($users, $master);
+        $userController = new UserController($users, $master, $superAdmins);
 
         $group->get('/users', [$userController, 'index'])->add($terdaftar);
         $group->get('/users/{id}', [$userController, 'show'])->add($terdaftar);

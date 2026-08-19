@@ -83,6 +83,38 @@ final class TechLogModel extends BaseModel
         return $this->fetchOne(self::SELECT . ' WHERE t.id = :id', ['id' => $id]);
     }
 
+    /**
+     * Pernahkah NIK ini muncul di histori aktivitas?
+     *
+     * Ini sumber utama "NIK yang dikenal sistem" saat pendaftaran. Sengaja
+     * bukan tabel users: teknisi lama yang belum pernah login tidak punya baris
+     * di sana, dan justru merekalah yang paling mungkin mendaftar. NIK mereka
+     * hanya ada di kolom snapshot ini, terikat ke akun penampung hasil migrasi.
+     *
+     * nik_snapshot tidak punya indeks, jadi query ini memindai tabel. Dengan
+     * 6.713 baris hasil migrasi biayanya tidak terasa, dan pemanggilnya hanya
+     * pendaftaran -- beberapa kali sehari, bukan per halaman dibuka. Kalau
+     * tabelnya tumbuh sampai ratusan ribu baris, tambahkan indeks pada
+     * nik_snapshot lewat skrip SQL baru (itu CREATE INDEX, bukan perubahan
+     * struktur kolom, jadi tidak melanggar kunci schema V1.0).
+     *
+     * LIMIT 1 membuat MySQL berhenti pada baris pertama yang cocok.
+     */
+    public function nikPernahDipakai(string $nik): bool
+    {
+        $nik = trim($nik);
+
+        if ($nik === '') {
+            return false;
+        }
+
+        // fetchValue() mengubah "tidak ada baris" menjadi null, bukan false.
+        return $this->fetchValue(
+            'SELECT 1 FROM tech_logs WHERE nik_snapshot = :nik LIMIT 1',
+            ['nik' => $nik]
+        ) !== null;
+    }
+
     /** @param array<string, mixed> $data */
     public function insert(array $data): void
     {

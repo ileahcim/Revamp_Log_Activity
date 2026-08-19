@@ -24,6 +24,9 @@ MariaDB di Hostinger.
 9. [Struktur folder](#9-struktur-folder)
 10. [Keputusan yang perlu diketahui](#10-keputusan-yang-perlu-diketahui)
 11. [Kalau ada masalah](#11-kalau-ada-masalah)
+12. [Pembatasan pendaftaran](#12-pembatasan-pendaftaran)
+13. [Super admin dan serah terima](#13-super-admin-dan-serah-terima)
+14. [Yang masih perlu dikerjakan di frontend](#14-yang-masih-perlu-dikerjakan-di-frontend)
 
 ---
 
@@ -303,16 +306,29 @@ setelah migrasi.
 | `AuthMiddleware` | token sah; menempelkan `uid` dan baris `users` ke request |
 | `RoleMiddleware([])` | sudah punya baris di tabel `users` |
 | `RoleMiddleware(['admin'])` | rolenya `admin` |
+| `SuperAdminMiddleware` | emailnya termasuk super admin — lihat [bagian 13](#13-super-admin-dan-serah-terima) |
 
 Token sah tapi belum punya baris di `users` mendapat **403**, bukan 401. Itu
 sinyal bagi frontend untuk menampilkan form "Lengkapi Profil" seperti alur di
 `Login.tsx` sekarang.
 
-Tiga route dikecualikan dan hanya dijaga `AuthMiddleware`: `POST /api/auth/sync`,
-`POST /api/auth/register`, dan `GET /api/master/divisions`. User yang baru
-pertama kali login memang belum punya baris di `users`, jadi kalau
+Empat route dikecualikan dan hanya dijaga `AuthMiddleware`: `POST /api/auth/sync`,
+`POST /api/auth/register`, `GET /api/auth/status`, dan `GET /api/master/divisions`.
+User yang baru pertama kali login memang belum punya baris di `users`, jadi kalau
 `RoleMiddleware` ikut dipasang dia akan ditolak 403 dan tidak akan pernah bisa
 mendaftar — termasuk saat form "Lengkapi Profil" mengambil pilihan divisinya.
+
+**Pendaftar yang menunggu persetujuan juga belum punya baris `users`.** Itu
+disengaja, dan itulah yang menahannya: `RoleMiddleware` menolaknya di setiap
+endpoint tanpa aturan tambahan, dan endpoint yang ditambahkan besok ikut
+terlindungi dengan sendirinya. Satu-satunya yang bisa dia buka adalah
+`GET /api/auth/status`, yang hanya mengembalikan permintaannya sendiri.
+Selengkapnya di [bagian 12](#12-pembatasan-pendaftaran).
+
+`SuperAdminMiddleware` sengaja dipasang sendirian, tidak ditumpuk di atas
+`RoleMiddleware(['admin'])`. Kalau ditumpuk, super admin yang `users.role`-nya
+sempat diubah orang lain ikut tertolak — padahal justru dialah yang harus bisa
+membetulkannya.
 
 ### Alur login yang menggantikan Login.tsx
 
@@ -322,18 +338,48 @@ const token = await hasil.user.getIdToken();
 
 const r = await post('/api/auth/sync', {}, token);
 
-if (r.data.registered) {
-  onLogin(r.data.user);                 // langsung masuk
-} else {
-  tampilkanFormProfil(r.data.prefill);  // { id, email, name } dari token
-  // lalu: post('/api/auth/register', { name, nik, divisi }, token)
+switch (r.data.status) {
+  case 'active':
+    onLogin(r.data.user);                 // langsung masuk
+    break;
+
+  case 'unregistered':
+    tampilkanFormProfil(r.data.prefill);  // { id, email, name } dari token
+    // lalu: post('/api/auth/register', { name, nik, divisi }, token)
+    break;
+
+  case 'pending':
+    tampilkanLayarMenunggu(r.data.registration);
+    break;
+
+  case 'rejected':
+    tampilkanPenolakan(r.data.registration.reason);
+    break;
 }
 ```
 
+Field `registered` yang lama tetap dikirim dan artinya tidak berubah, jadi
+frontend yang belum diperbarui tetap jalan — `pending` dan `rejected` sama-sama
+terbaca sebagai `registered: false`. Yang terjadi tanpa pembaruan frontend:
+pendaftar yang sudah mengantre akan terus melihat form "Lengkapi Profil" dan
+menerima **409** kalau menekan simpan lagi. Tidak berbahaya, tapi
+membingungkan — lihat [bagian 14](#14-yang-masih-perlu-dikerjakan-di-frontend).
+
 Yang dipercaya dari body hanya `name`, `nik`, dan `divisi`. `id`, `email`, dan
 `role` diambil dari token — kalau ketiganya ikut dikirim, backend mengabaikannya.
-Promosi super admin (`SUPER_ADMIN_EMAIL`) juga terjadi di server, bukan seperti
-sekarang yang ditulis frontend ke Firestore.
+Promosi super admin juga terjadi di server, bukan seperti sekarang yang ditulis
+frontend ke Firestore.
+
+`POST /api/auth/register` sekarang punya dua jawaban berhasil:
+
+| Kode | Artinya |
+|---|---|
+| **201** | profil langsung aktif — super admin, atau Lapis 2 sedang dimatikan |
+| **202** | permintaan masuk antrean, menunggu disetujui admin |
+
+`GET /api/auth/status` mengembalikan isi yang sama persis dengan
+`POST /api/auth/sync`, tapi tanpa efek samping dan tanpa body. Dipakai layar
+"menunggu persetujuan" untuk memeriksa ulang tanpa harus login ulang.
 
 ---
 
@@ -345,8 +391,19 @@ Sudah jadi:
 |---|---|---|---|
 | GET | `/api/health` | terbuka | memastikan backend hidup |
 | POST | `/api/auth/sync` | token sah | cek profil setelah login Google |
-| POST | `/api/auth/register` | token sah | buat profil pertama kali |
+| POST | `/api/auth/register` | token sah | daftar — 201 aktif, atau 202 masuk antrean |
+| GET | `/api/auth/status` | token sah | status sendiri, termasuk saat menunggu |
 | GET | `/api/auth/me` | terdaftar | profil sendiri |
+| GET | `/api/registrations` | **admin** | antrean, `?status=pending\|rejected` |
+| POST | `/api/registrations/{uid}/approve` | **admin** | setujui, body opsional `{ role }` |
+| POST | `/api/registrations/{uid}/reject` | **admin** | tolak, body opsional `{ reason }` |
+| DELETE | `/api/registrations/{uid}` | **admin** | hapus catatan tolakan, boleh daftar lagi |
+| GET | `/api/allowed-niks` | **admin** | daftar izin NIK |
+| POST | `/api/allowed-niks` | **admin** | izinkan NIK, body `{ nik, note? }` |
+| DELETE | `/api/allowed-niks/{nik}` | **admin** | cabut izin |
+| GET | `/api/super-admins` | **super admin** | siapa saja super admin |
+| POST | `/api/super-admins` | **super admin** | angkat, body `{ email }` |
+| DELETE | `/api/super-admins/{email}` | **super admin** | turunkan |
 | GET | `/api/users` | terdaftar | daftar user |
 | GET | `/api/tech-logs` | terdaftar | daftar aktivitas |
 | POST | `/api/tech-logs` | terdaftar | simpan aktivitas |
@@ -1023,3 +1080,339 @@ untuk memastikan `AllowOverride All` menyala.
 Origin Vite belum terdaftar. Tambahkan ke `CORS_ALLOWED_ORIGINS`, pisahkan
 dengan koma, dan tulis lengkap dengan skema serta port
 (`http://localhost:5173`).
+
+**Semua pendaftaran ditolak "NIK tersebut tidak bisa dipakai mendaftar".**
+Tabel `tech_logs` kosong atau NIK-nya tidak cocok. Periksa dulu:
+
+```sql
+SELECT COUNT(*) FROM tech_logs WHERE nik_snapshot = 'NIK-YANG-DICOBA';
+```
+
+Kalau nol, tambahkan NIK-nya lewat `POST /api/allowed-niks`, atau matikan
+sementara Lapis 1 dengan `REGISTRATION_REQUIRE_KNOWN_NIK=false`.
+
+**Pendaftar melihat "Profil tersimpan, tapi server tidak mengembalikan
+datanya".**
+Frontend belum diperbarui untuk jawaban **202**. `registerProfile()` di
+`utils/auth.ts` melempar error kalau `data.user` kosong, dan pendaftaran yang
+masuk antrean memang mengembalikan `user: null`. Permintaannya **tetap masuk
+antrean** — pesannya saja yang salah. Sampai frontend disesuaikan, jalankan
+`REGISTRATION_REQUIRE_APPROVAL=false`; Lapis 1 tetap bekerja. Lihat
+[bagian 14](#14-yang-masih-perlu-dikerjakan-di-frontend).
+
+**Semua super admin hilang setelah deploy ulang.**
+`storage/super-admins.json` ikut tertimpa. Yang di `.env` tidak terpengaruh —
+itu memang gunanya. Jalur pemulihannya ada di
+[bagian 13](#13-super-admin-dan-serah-terima).
+
+**"Gagal menulis ke .../storage/registrations.json".**
+Folder `storage/` tidak bisa ditulis PHP. Setel izinnya ke 755 (atau 775 kalau
+PHP jalan sebagai user lain), sama seperti syarat `storage/logs`.
+
+---
+
+## 12. Pembatasan pendaftaran
+
+Sebelumnya siapa pun yang punya link dan Akun Google bisa mendaftar, mengisi NIK
+apa saja, dan langsung punya akses penuh. Sekarang ada dua lapis.
+
+Login **tetap** Google SSO dan tidak berubah sedikit pun. Yang berubah hanya
+siapa yang boleh masuk setelah identitasnya terbukti.
+
+### Lapis 1 — NIK harus sudah dikenal sistem
+
+NIK dianggap dikenal kalau ada di salah satu dari dua tempat:
+
+| Sumber | Isinya |
+|---|---|
+| `tech_logs.nik_snapshot` | 6.713 baris hasil migrasi — seluruh teknisi lama |
+| `storage/allowed-niks.json` | NIK yang ditambahkan admin lewat AdminPanel |
+
+Sumbernya sengaja **bukan** tabel `users`. Teknisi lama yang belum pernah login
+tidak punya baris di sana sama sekali — NIK mereka hanya ada di kolom snapshot,
+terikat ke akun penampung `legacy-unknown`. Justru merekalah yang paling mungkin
+mendaftar.
+
+Yang selalu ditolak, apa pun keadaannya:
+
+- NIK yang sudah dipakai user aktif (`users.nik` bertipe UNIQUE)
+- NIK yang sedang dipakai permintaan lain di antrean
+- `LEGACY-000`, NIK akun penampung
+
+**Semua penolakan memakai satu kalimat yang sama persis.** "Tidak dikenal" dan
+"sudah dipakai" tidak dibedakan, karena kalau dibedakan, formulir pendaftaran —
+yang terbuka untuk siapa saja yang punya Akun Google — berubah jadi alat menebak
+NIK karyawan satu per satu: coba sebuah angka, baca pesannya, simpulkan.
+
+Yang tersisa dan diterima sebagai risiko: NIK yang lolos dijawab **202**
+sedangkan yang gagal dijawab **422**, jadi keduanya masih bisa dibedakan.
+Menutupnya berarti menerima semua pendaftaran ke antrean termasuk yang NIK-nya
+asing — memindahkan pekerjaan menyaring ke admin. Hasil tebakannya pun tidak
+berguna sendiri: tanpa persetujuan admin, NIK yang benar tidak membuka apa pun.
+
+### Lapis 2 — admin harus menyetujui
+
+Yang lolos Lapis 1 masuk ke `storage/registrations.json`, **bukan** ke tabel
+`users`.
+
+Ini keputusan yang paling menentukan di seluruh fitur ini. `users.role` bertipe
+`ENUM('admin','atasan','karyawan')`, dan menambah nilai `'pending'` ke ENUM
+adalah `ALTER TABLE` — schema V1.0 dikunci, jadi jalan itu tertutup. Menandai
+lewat kolom lain (misalnya `division_id` ke divisi sentinel) bisa saja, tapi
+harganya dua: divisi pilihan pendaftar tidak punya tempat disimpan, dan
+`RoleMiddleware` harus diajari menolak divisi itu di setiap endpoint — satu
+endpoint yang lupa memasang pemeriksaannya berarti pendaftar dapat akses penuh.
+
+Dengan tidak membuat baris `users` sama sekali:
+
+- `RoleMiddleware` yang sudah ada menolaknya di semua endpoint, karena atribut
+  `user` bernilai `null`. Tidak ada aturan akses baru yang bisa salah ditulis.
+- `users.nik` yang UNIQUE tidak terkunci oleh orang yang belum tentu disetujui.
+- Nama, NIK, dan divisi pilihannya tersimpan utuh.
+
+Yang dibayar: antrean tidak ikut dalam dump database. Kalau `storage/` hilang,
+pendaftaran yang menunggu ikut hilang dan orangnya mendaftar ulang. Tidak ada
+data permanen yang lenyap — yang belum disetujui memang belum jadi apa-apa.
+
+### Yang ditolak disimpan, bukan dihapus
+
+Kalau dihapus, orang yang sama bisa mendaftar berkali-kali dan antrean admin
+tidak ada habisnya. `DELETE /api/registrations/{uid}` membuka kembali penolakan
+yang keliru.
+
+### Siapa yang lolos kedua lapis
+
+Hanya **super admin**. Ini yang menjaga supaya aturan di atas tidak bisa
+mengunci semua orang di luar: super admin baru yang diangkat pendahulunya belum
+tentu punya NIK di `tech_logs` mana pun, dan kalau semua admin sudah pergi,
+tidak ada siapa pun di dalam yang bisa menyetujuinya.
+
+Pengecualiannya menyeluruh, bukan hanya kedua lapis itu: kalau permintaannya
+sudah terlanjur mengantre, atau pernah ditolak, sebelum dia diangkat menjadi
+super admin, keduanya tetap dilewati. `GET /api/auth/status` juga mengembalikan
+`unregistered` untuknya, bukan `pending` atau `rejected`, supaya yang muncul
+adalah formulir pendaftaran — bukan layar tunggu yang tidak ada seorang pun
+tersisa untuk membukanya. Antrean dan catatan tolakannya dibersihkan sendiri
+setelah profilnya jadi.
+
+Satu-satunya yang **tidak** bisa dibuka dengan cara ini adalah akun penampung
+`legacy-unknown`; pemeriksaannya berjalan lebih dulu, jadi mengangkat alamat
+`.invalid` menjadi super admin pun tidak membukanya.
+
+Akun penampung `legacy-unknown` ditolak di semua jalur: UID-nya bukan UID Google
+dan emailnya memakai domain `.invalid` yang tidak bisa didaftarkan siapa pun.
+
+### Dua sakelar darurat
+
+```dotenv
+REGISTRATION_REQUIRE_KNOWN_NIK=true   # Lapis 1
+REGISTRATION_REQUIRE_APPROVAL=true    # Lapis 2
+```
+
+Keduanya menyala kalau barisnya dihapus atau dikosongkan — default-nya sengaja
+yang paling ketat. Bisa dimatikan sendiri-sendiri, tanpa menyentuh kode atau
+database. Mematikan Lapis 1 **tidak** mematikan pemeriksaan NIK kembar; yang
+hilang hanya syarat "harus sudah dikenal".
+
+### Alur untuk atasan dan admin baru
+
+Mereka tidak punya jejak di `tech_logs`, jadi:
+
+1. Admin menambahkan NIK-nya: `POST /api/allowed-niks` dengan `{ nik, note }`
+2. Orangnya login Google dan mengisi form pendaftaran seperti biasa
+3. Pendaftarannya **tetap** masuk antrean dan harus disetujui
+4. Saat menyetujui, admin memilih rolenya: `{ "role": "atasan" }`
+
+Daftar izin hanya menambah sumber NIK yang sah. Ia tidak melewati satu pun
+pemeriksaan lain.
+
+### Apa yang tercatat di `audit_logs`
+
+| Aksi | Kapan |
+|---|---|
+| `Menyetujui pendaftaran` | admin menyetujui |
+| `Menolak pendaftaran` | admin menolak, beserta alasannya |
+| `Membuka kembali pendaftaran yang ditolak` | catatan tolakan dihapus |
+| `Menambahkan NIK ke daftar izin` | NIK diizinkan |
+| `Menghapus NIK dari daftar izin` | izin dicabut |
+| `Mengangkat super admin` | lihat bagian 13 |
+| `Menurunkan super admin` | lihat bagian 13 |
+
+Yang tercatat sebagai pelaku selalu **adminnya**, tidak pernah pelamarnya.
+Bukan pilihan gaya: `audit_logs.user_id` punya foreign key ke `users`,
+sedangkan pelamar yang ditolak justru tidak punya baris di sana. Identitas
+pelamar (email dan NIK) ikut ditulis di kolom `description`.
+
+Kalau penulisan audit gagal, aksinya **tetap berhasil** dan pesan suksesnya
+diberi imbuhan peringatan. Membatalkan persetujuan yang sudah tersimpan hanya
+karena catatannya gagal ditulis justru membuat keadaan lebih kacau.
+
+---
+
+## 13. Super admin dan serah terima
+
+### Dari mana statusnya berasal
+
+Gabungan dua sumber:
+
+| Sumber | Bisa diturunkan lewat aplikasi? |
+|---|---|
+| `SUPER_ADMIN_EMAILS` di `.env` (dipisah koma) | **tidak** |
+| `storage/super-admins.json`, diangkat lewat AdminPanel | ya |
+
+`SUPER_ADMIN_EMAIL` (bentuk tunggal, nama lama) masih dibaca dan diperlakukan
+sama seperti yang di `.env`, jadi pemasangan lama tetap jalan tanpa disunting.
+
+Status ini melekat pada **email**, bukan pada `users.role`. Alasannya: admin
+biasa boleh mengubah role orang lain lewat `PUT /api/users/{id}`. Kalau status
+super admin ikut disimpan di sana, admin biasa bisa menurunkan super admin —
+persis yang harus dicegah. Karena melekat pada email, `AuthController::sync()`
+menaikkan role super admin menjadi `admin` setiap kali dia login; walaupun
+rolenya sempat diturunkan orang lain, dia naik lagi begitu masuk.
+
+### Tiga pengaman
+
+1. Alamat dari `.env` tidak bisa diturunkan lewat endpoint mana pun.
+2. Super admin terakhir tidak bisa diturunkan, termasuk oleh dirinya sendiri.
+3. Hanya super admin yang boleh mengangkat super admin — admin biasa tidak.
+
+Mengangkat alamat yang **belum punya akun** diperbolehkan, dan itu memang
+jalurnya: alamat yang sudah jadi super admin melewati kedua lapis pembatasan
+saat mendaftar, jadi penerus bisa disiapkan sebelum dia pernah login sekalipun.
+
+### Serah Terima
+
+Yang harus dilakukan **sebelum** super admin lama meninggalkan sistem:
+
+1. **Angkat penggantinya.** `POST /api/super-admins` dengan `{ "email": "..." }`,
+   atau lewat AdminPanel. Boleh sebelum orangnya pernah login.
+2. **Pastikan penggantinya benar-benar bisa masuk.** Minta dia login dan periksa
+   `GET /api/auth/status` mengembalikan `is_super_admin: true`. Jangan hanya
+   percaya daftarnya.
+3. **Pindahkan minimal satu alamat penerus ke `.env`.** Sunting
+   `SUPER_ADMIN_EMAILS` di server, pisahkan dengan koma. Ini yang membuat
+   sistem tetap bisa dimasuki walaupun `storage/` suatu saat terhapus.
+   ```dotenv
+   SUPER_ADMIN_EMAILS=penerus@perusahaan.com,cadangan@perusahaan.com
+   ```
+4. **Baru turunkan diri sendiri**, kalau memang perlu:
+   `DELETE /api/super-admins/{email}`. Alamat yang ada di `.env` tidak bisa
+   diturunkan dari sini — hapus dulu dari `.env`.
+5. **Serahkan akses server.** Login hPanel Hostinger, letak `.env`, dan letak
+   `storage/`. Tanpa itu langkah 3 tidak bisa diulang oleh siapa pun.
+6. **Ikutkan `storage/*.json` ke dalam rutinitas cadangan.** Isinya tidak ada di
+   dump database: antrean pendaftaran, daftar izin NIK, dan daftar super admin.
+
+### Kalau semua super admin sudah tidak ada
+
+Urut dari yang paling tidak merusak:
+
+**Punya akses `.env` (hPanel / FTP).** Tambahkan alamat mana pun ke
+`SUPER_ADMIN_EMAILS`, simpan, selesai. Berlaku pada request berikutnya, tidak
+perlu restart apa pun. Kalau alamat itu belum punya akun, dia bisa langsung
+mendaftar tanpa melewati kedua lapis.
+
+**Punya akses `storage/`.** Sunting `storage/super-admins.json`:
+
+```json
+{
+  "emails": {
+    "penerus@perusahaan.com": {
+      "email": "penerus@perusahaan.com",
+      "promoted_by": "pemulihan-manual",
+      "promoted_by_email": "pemulihan-manual",
+      "promoted_at": "2026-08-16T10:00:00+07:00"
+    }
+  }
+}
+```
+
+**Hanya punya akses database (phpMyAdmin).** Ini pemulihan **sebagian** — jujur
+saja soal ini: status super admin tidak ada di database, jadi tidak bisa
+diberikan dari sana. Yang bisa dilakukan adalah mengangkat admin biasa:
+
+```sql
+UPDATE users SET role = 'admin' WHERE email = 'penerus@perusahaan.com';
+```
+
+Admin biasa cukup untuk menyetujui pendaftaran, mengelola daftar izin NIK, dan
+mengurus user — jadi kantor tetap jalan. Yang tidak bisa dia lakukan hanya
+mengangkat super admin. Untuk itu tetap perlu akses `.env` atau `storage/`.
+
+**Tidak punya akses apa pun.** Hubungi dukungan Hostinger untuk memulihkan akses
+hPanel. Tidak ada jalan lain, dan itu memang disengaja.
+
+---
+
+## 14. Yang masih perlu dikerjakan di frontend
+
+Backend sudah siap; frontend **belum disentuh sama sekali**. Berikut yang perlu
+diubah.
+
+> **Sampai ini dikerjakan, jalankan `REGISTRATION_REQUIRE_APPROVAL=false`.**
+> Lapis 1 tetap bekerja penuh — NIK asing sudah tertolak — sementara Lapis 2
+> menunggu layarnya ada. Kalau dinyalakan sekarang, pendaftar yang masuk antrean
+> akan melihat pesan yang salah (lihat butir pertama di bawah).
+
+### `src/utils/auth.ts`
+
+- **`SyncResult` perlu field `status`**: `'active' | 'unregistered' | 'pending' |
+  'rejected'`, plus `registration` dan `is_super_admin`. Field `registered` yang
+  lama tetap dikirim server, jadi tidak ada yang rusak selama masa transisi.
+- **`registerProfile()` harus menangani 202.** Sekarang fungsi itu melempar
+  `ApiError(500, 'Profil tersimpan, tapi server tidak mengembalikan datanya')`
+  kalau `data.user` kosong — dan jawaban 202 memang mengembalikan `user: null`.
+  Pendaftarannya sebenarnya berhasil masuk antrean; hanya pesannya yang salah.
+  Return type-nya perlu berubah dari `Promise<User>` menjadi sesuatu yang bisa
+  mewakili dua keadaan.
+- **Fungsi baru** untuk endpoint admin: daftar antrean, setujui, tolak, buka
+  kembali, daftar izin NIK (baca/tambah/hapus), dan super admin
+  (baca/angkat/turunkan).
+- **`getStatus()`** yang memanggil `GET /api/auth/status`, untuk layar tunggu.
+
+### `src/components/Login.tsx`
+
+Cabang `if (r.registered)` sekarang punya empat kemungkinan, bukan dua. Lihat
+contoh `switch` di [bagian 6](#6-autentikasi).
+
+### Layar baru: "Menunggu Persetujuan"
+
+Muncul saat `status === 'pending'`. Isinya nama, NIK, dan divisi yang didaftarkan
+(ada di `data.registration`), plus tombol "Periksa lagi" yang memanggil
+`GET /api/auth/status`. Jangan polling otomatis rapat-rapat — persetujuan bisa
+makan waktu berhari-hari.
+
+Layar serupa untuk `status === 'rejected'`, menampilkan
+`data.registration.reason`.
+
+Selama menunggu, **tidak ada endpoint lain yang bisa dipanggil**. Semua menjawab
+403 dengan pesan "Pendaftaran Anda sedang menunggu persetujuan admin", jadi
+jangan biarkan aplikasi memuat dashboard lalu gagal sepotong-sepotong.
+
+### `src/components/AdminPanel.tsx`
+
+Tiga hal baru:
+
+1. **Tab "Persetujuan"** — daftar dari `GET /api/registrations`, tiap baris
+   dengan tombol Setujui (pilih role dulu: `karyawan` / `atasan` / `admin`) dan
+   Tolak (dengan kolom alasan). Tambahkan penanda jumlah antrean di judul tab;
+   tanpa itu tidak ada yang tahu ada orang menunggu.
+2. **Daftar izin NIK** — di tab Pengaturan. Form satu baris (NIK + catatan) dan
+   daftar yang bisa dihapus.
+3. **Kelola super admin** — hanya ditampilkan kalau `is_super_admin` bernilai
+   true. `GET /api/super-admins` mengembalikan `removable` per baris; pakai itu
+   untuk menonaktifkan tombol hapus pada alamat yang berasal dari `.env`, jangan
+   menawarkan tombol yang sudah pasti ditolak server.
+
+### Penanganan response baru
+
+| Kode | Dari | Artinya |
+|---|---|---|
+| 202 | `POST /api/auth/register` | masuk antrean, `user` sengaja `null` |
+| 403 | endpoint mana pun | pesan sudah membedakan menunggu / ditolak / belum daftar |
+| 403 | `/api/super-admins/*` | "Hanya super admin yang boleh…" |
+| 422 | `POST /api/auth/register` | `errors.nik` — tampilkan di bawah input NIK |
+
+Pesan 422 untuk NIK **selalu sama** apa pun sebabnya. Jangan menambahkan tebakan
+di frontend seperti "mungkin NIK ini sudah dipakai" — itu mengembalikan kebocoran
+yang baru saja ditutup di server.

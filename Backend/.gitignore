@@ -3,8 +3,20 @@ vendor/
 .env.local
 storage/logs/*
 storage/cache/*
-storage/settings.json
 !storage/logs/.gitkeep
 !storage/cache/.gitkeep
+
+# Keadaan server, bukan kode. Isinya berubah sendiri selagi aplikasi jalan:
+#
+#   settings.json        sakelar maintenance
+#   registrations.json   antrean pendaftaran  -> memuat email, nama, dan NIK
+#   allowed-niks.json    daftar izin NIK      -> memuat NIK
+#   super-admins.json    super admin yang diangkat lewat AdminPanel
+#
+# Tiga yang terakhir memuat data pribadi karyawan, dan repo ini publik. Pola
+# di bawah menutup keempatnya sekaligus, termasuk berkas serupa yang mungkin
+# ditambahkan nanti.
+storage/*.json
+
 *.log
 .DS_Store

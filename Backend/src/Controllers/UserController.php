@@ -8,6 +8,7 @@ use App\Config\Env;
 use App\Helpers\ApiResponse;
 use App\Helpers\NikGuard;
 use App\Helpers\Pagination;
+use App\Helpers\SuperAdmins;
 use App\Helpers\Transformer;
 use App\Helpers\Validator;
 use App\Models\MasterModel;
@@ -31,7 +32,8 @@ final class UserController
 
     public function __construct(
         private UserModel $users,
-        private MasterModel $master
+        private MasterModel $master,
+        private SuperAdmins $superAdmins
     ) {
     }
 
@@ -105,7 +107,7 @@ final class UserController
         $pelaku = $request->getAttribute('user');
 
         if ($this->isSuperAdmin($target) && !$this->isSuperAdmin($pelaku)) {
-            return ApiResponse::error($response, 'Akun super admin hanya bisa diubah oleh pemiliknya.', 403);
+            return ApiResponse::error($response, 'Akun super admin hanya bisa diubah oleh sesama super admin.', 403);
         }
 
         $body = $request->getParsedBody();
@@ -368,12 +370,20 @@ final class UserController
 
     // -----------------------------------------------------------------------
 
-    /** @param array<string, mixed> $user */
+    /**
+     * Super admin sekarang bisa lebih dari satu: gabungan SUPER_ADMIN_EMAILS di
+     * .env dan yang diangkat lewat AdminPanel. Lihat Helpers/SuperAdmins.
+     *
+     * Akibatnya di sini: seorang super admin boleh mengubah profil super admin
+     * lain, sedangkan admin biasa tetap tidak boleh menyentuh satu pun dari
+     * mereka. Status super admin sendiri tidak berada di users.role, jadi tidak
+     * ada cara mencabutnya lewat endpoint ini.
+     *
+     * @param array<string, mixed> $user
+     */
     private function isSuperAdmin(array $user): bool
     {
-        $superAdmin = strtolower(trim((string) Env::get('SUPER_ADMIN_EMAIL', '')));
-
-        return $superAdmin !== '' && strtolower((string) $user['email']) === $superAdmin;
+        return $this->superAdmins->isSuperAdmin((string) ($user['email'] ?? ''));
     }
 
     private function trimmed(mixed $value): ?string
