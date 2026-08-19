@@ -654,8 +654,7 @@ export default function App() {
           )}
 
           {currentUser.role === 'admin' && activeTab === 'admin' && (
-             <AdminPanel 
-               onSuccessImport={(msg) => setSuccessModal({ isOpen: true, title: 'Import Berhasil', message: msg })} 
+             <AdminPanel
                onRefreshLogs={refreshLogs}
                currentUser={currentUser}
              />

@@ -151,19 +151,3 @@ export const deleteLog = async (id: string): Promise<void> => {
     throw Error("Gagal menghapus data aktivitas");
   }
 };
-
-/**
- * Belum ada padanannya di backend.
- *
- * Versi lamanya menghapus seluruh collection tech_logs di Firestore. Kalau
- * dibiarkan hidup, ia menghapus data di tempat yang sudah tidak dibaca aplikasi
- * -- tampak berhasil, padahal tidak mengubah apa pun di MariaDB. Karena itu
- * sengaja dibuat gagal keras, dan tombol pemanggilnya di AdminPanel
- * dinonaktifkan.
- */
-export const clearLogs = async (): Promise<never> => {
-  throw Error(
-    'Fitur "Kosongkan Tabel" belum tersedia. Backend belum punya endpoint hapus massal, ' +
-    'dan yang lama menghapus di Firestore yang sudah tidak dipakai.'
-  );
-};

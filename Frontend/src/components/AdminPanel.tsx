@@ -1,18 +1,12 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import Papa from 'papaparse';
+import React, { useState, useEffect, useMemo } from 'react';
 import { User, DeleteMode, updateUserRole, AuditLogItem, fetchAuditLogs, fetchUsers as fetchUsersApi, updateUserProfileByAdmin, deleteUserAndLogs } from '../utils/auth';
-import { Users, History, Bug, Settings, Image as ImageIcon, X, Upload, Edit, Trash2 } from 'lucide-react';
+import { Users, History, Bug, Settings, Image as ImageIcon, X, Edit, Trash2 } from 'lucide-react';
 import { updateBugReportStatus, BugReport, BugStatus, bugStatusClass, fetchBugReport, fetchBugReports } from '../utils/bugReport';
 import { fetchMaintenance, setMaintenance as simpanMaintenance } from '../utils/settings';
 import { useDivisions } from '../utils/masterData';
 import { ApiError } from '../utils/api';
-// removed getLogs
-import { LogActivity } from '../types';
-import { writeBatch, doc } from 'firebase/firestore';
-import { db } from '../utils/firebase';
 
 interface AdminPanelProps {
-  onSuccessImport?: (msg: string) => void;
   onRefreshLogs?: () => void;
   currentUser: User;
 }
@@ -28,7 +22,7 @@ const initialTodayStr = new Date(new Date().getTime() - new Date().getTimezoneOf
 let pAuditStartDate: string = initialTodayStr;
 let pAuditEndDate: string = initialTodayStr;
 
-export default function AdminPanel({ onSuccessImport, onRefreshLogs, currentUser }: AdminPanelProps) {
+export default function AdminPanel({ onRefreshLogs, currentUser }: AdminPanelProps) {
   const [activeTab, _setActiveTab] = useState<'users' | 'audit' | 'bugs' | 'settings'>(pActiveTab);
   const setActiveTab = (val: 'users' | 'audit' | 'bugs' | 'settings') => { pActiveTab = val; _setActiveTab(val); };
 
@@ -77,109 +71,6 @@ export default function AdminPanel({ onSuccessImport, onRefreshLogs, currentUser
   const setAuditPage = (val: number) => { pAuditPage = val; _setAuditPage(val); };
 
   const AUDIT_ITEMS_PER_PAGE = 40;
-
-  // Import CSV states
-  const [importing, setImporting] = useState(false);
-  const [importMode, setImportMode] = useState<'append' | 'replace'>('append');
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const handleImportCsv = (file: File) => {
-    setImporting(true);
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: async (results) => {
-        try {
-          const importedData = results.data as any[];
-          const newLogs: LogActivity[] = [];
-
-          importedData.forEach((row, index) => {
-            let rawTanggal = String(row['Tanggal'] || new Date().toISOString().split('T')[0]);
-            // If it's DD/MM/YYYY or DD-MM-YYYY, convert to YYYY-MM-DD
-            if (rawTanggal.includes('/')) {
-              const parts = rawTanggal.split('/');
-              if (parts.length === 3) {
-                 rawTanggal = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-              }
-            } else if (rawTanggal.match(/^\d{2}-\d{2}-\d{4}$/)) {
-              const parts = rawTanggal.split('-');
-              rawTanggal = `${parts[2]}-${parts[1]}-${parts[0]}`;
-            }
-
-            const log: LogActivity = {
-              id: `${Date.now()}_${Math.random().toString(36).substring(2, 9)}_${index}`,
-              created_at: new Date().toISOString(),
-              tanggal: rawTanggal,
-              nama_technician: String(row['Nama Technician'] || '').trim(),
-              nik: String(row['NIK'] || '').trim(),
-              supervisor: String(row['Supervisor'] || '').trim(),
-              shift: String(row['Shift'] || 'Pagi').trim() as any,
-              wo_notif: String(row['WO/Notif'] || '').trim(),
-              asset_tag: String(row['Asset/Tag'] || '').trim(),
-              party: String(row['Party'] || '').trim(),
-              sn: String(row['SN'] || '').trim(),
-              deskripsi_pekerjaan: String(row['Deskripsi Pekerjaan'] || '').trim(),
-              kategori_code: String(row['Kategori (Code)'] || '').trim().toUpperCase(),
-              start_time: String(row['Start (hh:mm)'] || '').trim(),
-              finish_time: String(row['Finish (hh:mm)'] || '').trim(),
-              duration_minutes: (parseFloat(String(row['Durasi (jam)'] || '0').replace(',', '.')) || 0) * 60,
-              status: String(row['Status'] || '-').trim() as any,
-              delay_code: String(row['Delay Code'] || '').trim().toUpperCase(),
-              output_qty: parseFloat(String(row['Output Qty'] || '0').replace(',', '.')) || 0,
-              catatan: String(row['Catatan'] || '').trim()
-            };
-            // Clean undefined so no firebase complains
-            Object.keys(log).forEach(key => {
-              if (log[key as keyof LogActivity] === undefined) {
-                delete log[key as keyof LogActivity];
-              }
-            });
-            newLogs.push(log);
-          });
-
-          if (importMode === 'replace') {
-            try {
-               await import('../utils/storage').then(m => m.clearLogs());
-            } catch(e) {
-               console.error(e);
-            }
-          }
-
-          try {
-            const chunkSize = 500;
-            for (let i = 0; i < newLogs.length; i += chunkSize) {
-              const batch = writeBatch(db);
-              const chunk = newLogs.slice(i, i + chunkSize);
-              chunk.forEach(log => {
-                const docRef = doc(db, 'tech_logs', log.id);
-                batch.set(docRef, log, { merge: true });
-              });
-              await batch.commit();
-            }
-          } catch(firebaseError) {
-            console.error("Firebase import error: ", firebaseError);
-            alert("Sebagian data gagal disinkronkan ke server Firebase. Cek koneksi atau izin.");
-          }
-
-          setImporting(false);
-          
-          if (onRefreshLogs) onRefreshLogs();
-          if (onSuccessImport) onSuccessImport(`Berhasil menginjeksi ${newLogs.length} baris data CSV ke dalam sistem.`);
-          if (fileInputRef.current) fileInputRef.current.value = '';
-
-        } catch (error) {
-          console.error(error);
-          alert('Terjadi kesalahan saat mapping data CSV. Pastikan format kolom sesuai.');
-          setImporting(false);
-        }
-      },
-      error: (error) => {
-        console.error(error);
-        alert('Gagal memparsing file CSV.');
-        setImporting(false);
-      }
-    });
-  };
 
   // Tidak ada lagi cadangan ke daftar user contoh. Kegagalan mengambil daftar
   // sekarang menghasilkan tabel kosong, bukan empat nama karangan yang terlihat
@@ -748,117 +639,6 @@ export default function AdminPanel({ onSuccessImport, onRefreshLogs, currentUser
                   <input type="checkbox" className="sr-only peer" checked={isMaintenance} onChange={handleMaintenanceToggle} />
                   <div className="w-14 h-7 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-red-600"></div>
                 </label>
-              </div>
-            </div>
-
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-6 max-w-2xl mb-6">
-              <h4 className="font-bold text-slate-800 flex items-center gap-2 mb-2">
-                <Upload className="w-5 h-5 text-[#143c68]" />
-                Import Data dari CSV (Stress Test)
-              </h4>
-              <p className="text-slate-600 text-sm mb-4">
-                Fitur ini dirancang untuk menginjeksi ribuan baris data log aktivitas ke dalam Database / Firebase. Pastikan format kolom sesuai dengan template export.
-              </p>
-
-              {/* Import menulis ke Firestore lewat writeBatch, sementara
-                  aplikasi sudah membaca dari MariaDB. Kalau dibiarkan aktif,
-                  ribuan baris masuk ke tempat yang tidak dibaca siapa pun dan
-                  hilang tanpa pesan error. */}
-              <p className="text-sm font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
-                Sementara tidak tersedia — menunggu endpoint backend untuk impor massal.
-              </p>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">Pilih Mode Import</label>
-                  <div className="flex gap-4">
-                    <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-                      <input 
-                        type="radio" 
-                        name="importMode" 
-                        value="append" 
-                        checked={importMode === 'append'} 
-                        onChange={() => setImportMode('append')}
-                        className="w-4 h-4 text-indigo-600 border-slate-300 focus:ring-indigo-600"
-                      />
-                      Tambahkan ke data yang sudah ada (Append)
-                    </label>
-                    <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-                      <input 
-                        type="radio" 
-                        name="importMode" 
-                        value="replace" 
-                        checked={importMode === 'replace'} 
-                        onChange={() => setImportMode('replace')}
-                        className="w-4 h-4 text-indigo-600 border-slate-300 focus:ring-indigo-600"
-                      />
-                      Timpa semua data lama (Replace)
-                    </label>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-4">
-                  <input
-                    type="file"
-                    accept=".csv"
-                    ref={fileInputRef}
-                    disabled
-                    className="block w-full text-sm text-slate-500
-                      file:mr-4 file:py-2 file:px-4
-                      file:rounded-md file:border-0
-                      file:text-sm file:font-semibold
-                      file:bg-[#143c68] file:text-white
-                      hover:file:bg-[#1a4f8a]
-                      cursor-pointer border border-slate-300 rounded-md bg-white p-1
-                      disabled:opacity-50 disabled:cursor-not-allowed"
-                  />
-                  <button
-                    onClick={() => fileInputRef.current?.files?.[0] && handleImportCsv(fileInputRef.current.files[0])}
-                    disabled
-                    title="Sementara tidak tersedia — menunggu endpoint backend"
-                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-bold text-sm hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap min-w-[120px]"
-                  >
-                    {importing ? 'Loading...' : 'Mulai Import'}
-                  </button>
-                </div>
-              </div>
-            </div>
-            
-            <div className="bg-red-50 border border-red-200 rounded-xl p-6 max-w-2xl">
-              <div className="flex items-start justify-between">
-                <div>
-                  <h4 className="font-bold text-red-800 flex items-center gap-2">
-                    <X className="w-5 h-5 text-red-600" />
-                    Kosongkan Data (Drop Tabel Tech Logs)
-                  </h4>
-                  <p className="text-red-600 text-sm mt-1 mb-4">
-                    Fitur ini akan menghapus <b>semua log aktivitas</b> di database Firebase secara permanen. Sangat berguna setelah selesai melakukan uji coba.
-                  </p>
-
-                  {/* Yang paling berisiko dari ketiganya. Versi lamanya
-                      menghapus seluruh collection tech_logs di Firestore --
-                      setelah migrasi, itu menghapus data di tempat yang sudah
-                      tidak dibaca aplikasi sambil melaporkan "berhasil", dan
-                      tidak menyentuh satu baris pun di MariaDB. */}
-                  <p className="text-sm font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
-                    Sementara tidak tersedia — menunggu endpoint backend untuk hapus massal.
-                  </p>
-
-                  <button
-                    onClick={async () => {
-                      if (window.confirm("PERINGATAN: Anda yakin ingin mengosongkan semua log aktivitas uji coba secara permanen?")) {
-                        await import('../utils/storage').then(m => m.clearLogs());
-                        if (onRefreshLogs) onRefreshLogs();
-                        if (onSuccessImport) onSuccessImport("Semua log aktivitas berhasil dikosongkan (Tabel di-drop).");
-                      }
-                    }}
-                    disabled
-                    title="Sementara tidak tersedia — menunggu endpoint backend"
-                    className="px-4 py-2 bg-red-600 text-white rounded-lg font-bold text-sm hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-red-600"
-                  >
-                    Kosongkan Tabel Sekarang
-                  </button>
-                </div>
               </div>
             </div>
           </div>
