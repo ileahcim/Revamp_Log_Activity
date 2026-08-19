@@ -10,7 +10,8 @@ import InformationScreens from './components/InformationScreens';
 import AdminPanel from './components/AdminPanel';
 import BugReportModal from './components/BugReportModal';
 import SuccessModal from './components/SuccessModal';
-import { logout, syncSession, User, fetchUsers } from './utils/auth';
+import RegistrationStatus from './components/RegistrationStatus';
+import { logout, syncSession, RegistrationInfo, User, fetchUsers } from './utils/auth';
 import { fetchMaintenance } from './utils/settings';
 import { signOut } from 'firebase/auth';
 import { auth } from './utils/firebase';
@@ -20,15 +21,43 @@ import GlobalExportModal from './components/GlobalExportModal';
 import { MasterDataProvider } from './utils/masterData';
 import { deleteDraft } from './utils/drafts';
 
+/**
+ * Akun yang sudah mendaftar tapi belum boleh masuk.
+ *
+ * Sengaja terpisah dari currentUser dan bukan sekadar "user dengan role
+ * kosong": selama menunggu, orangnya tidak punya baris di tabel users sama
+ * sekali, jadi tidak satu pun endpoint aplikasi bisa dipanggil. Menyimpannya
+ * sebagai user setengah jadi akan membuat seluruh layar memuat lalu gagal
+ * sepotong-sepotong.
+ */
+interface StatusPendaftaran {
+  status: 'pending' | 'rejected';
+  registration: RegistrationInfo | null;
+}
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [statusPendaftaran, setStatusPendaftaran] = useState<StatusPendaftaran | null>(null);
+
+  // Dari /api/auth/sync. Hanya menentukan apa yang ditampilkan di AdminPanel;
+  // pengamannya SuperAdminMiddleware di server.
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+
+  /** Satu pintu masuk supaya ketiga state di atas tidak pernah saling bertentangan. */
+  const masuk = (user: User, superAdmin: boolean) => {
+    setStatusPendaftaran(null);
+    setIsSuperAdmin(superAdmin);
+    setCurrentUser(user);
+  };
 
   useEffect(() => {
     const unsub = import('firebase/auth').then(({ onAuthStateChanged }) => {
       const unsubscribeFunction = onAuthStateChanged(auth, async (firebaseUser) => {
         if (!firebaseUser) {
           setCurrentUser(null);
+          setStatusPendaftaran(null);
+          setIsSuperAdmin(false);
           setAuthLoading(false);
           return;
         }
@@ -38,12 +67,27 @@ export default function App() {
         // tidak di-signOut, supaya Login bisa melanjutkan ke form pendaftaran.
         try {
           const sesi = await syncSession();
-          setCurrentUser(sesi.registered ? sesi.user : null);
+
+          if (sesi.status === 'active' && sesi.user) {
+            masuk(sesi.user, sesi.isSuperAdmin);
+          } else if (sesi.status === 'pending' || sesi.status === 'rejected') {
+            // Sudah mendaftar, belum boleh masuk. Layar tunggu yang muncul,
+            // bukan form pendaftaran -- mengisinya lagi hanya akan dijawab 409.
+            setCurrentUser(null);
+            setIsSuperAdmin(false);
+            setStatusPendaftaran({ status: sesi.status, registration: sesi.registration });
+          } else {
+            setCurrentUser(null);
+            setIsSuperAdmin(false);
+            setStatusPendaftaran(null);
+          }
         } catch (e) {
           // Backend mati atau token ditolak. Diperlakukan sebagai belum login;
           // layar Login yang muncul, bukan halaman kosong tanpa penjelasan.
           console.error("Gagal memeriksa sesi ke backend", e);
           setCurrentUser(null);
+          setIsSuperAdmin(false);
+          setStatusPendaftaran(null);
         } finally {
           setAuthLoading(false);
         }
@@ -155,6 +199,9 @@ export default function App() {
   }, [currentUser, listStartDate, listEndDate, resumeStartDate, resumeEndDate, dashboardDate]);
 
   const handleLogout = async () => {
+    // logout() hanya menulis catatan audit kalau ada user; pendaftar yang masih
+    // menunggu memang tidak punya baris users, dan endpoint audit akan
+    // menolaknya 403. Karena itu currentUser dioper apa adanya, bukan dipaksa.
     await logout(currentUser);
     try {
       await signOut(auth);
@@ -162,6 +209,8 @@ export default function App() {
       console.error(e);
     }
     setCurrentUser(null);
+    setStatusPendaftaran(null);
+    setIsSuperAdmin(false);
   };
 
   const handleDeleteSuccess = (id: string) => {
@@ -270,7 +319,22 @@ export default function App() {
         </div>
       );
     }
-    return <Login onLogin={setCurrentUser} />;
+
+    // Sudah mendaftar, tinggal menunggu (atau ditolak). Berdiri sendiri di
+    // depan aplikasi: tidak ada endpoint lain yang bisa dipanggil dari sini.
+    if (statusPendaftaran) {
+      return (
+        <RegistrationStatus
+          status={statusPendaftaran.status}
+          registration={statusPendaftaran.registration}
+          onActive={masuk}
+          onUnregistered={() => setStatusPendaftaran(null)}
+          onLogout={handleLogout}
+        />
+      );
+    }
+
+    return <Login onLogin={masuk} onPending={setStatusPendaftaran} />;
   }
 
   const activeMaintenance = isMaintenance;
@@ -657,6 +721,8 @@ export default function App() {
              <AdminPanel
                onRefreshLogs={refreshLogs}
                currentUser={currentUser}
+               isSuperAdmin={isSuperAdmin}
+               onSuperAdminChange={setIsSuperAdmin}
              />
           )}
         </main>

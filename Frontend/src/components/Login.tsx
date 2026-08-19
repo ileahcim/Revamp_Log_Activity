@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { User, addAuditLog, registerProfile, syncSession } from '../utils/auth';
+import { RegistrationInfo, User, addAuditLog, getStatus, registerProfile, syncSession } from '../utils/auth';
 import { Division, fetchDivisions } from '../utils/master';
 import { ApiError } from '../utils/api';
 import { Lock, Mail, ChevronLeft, User as UserIcon, LogIn } from 'lucide-react';
@@ -7,10 +7,12 @@ import { signInWithPopup } from 'firebase/auth';
 import { auth, googleProvider } from '../utils/firebase';
 
 interface LoginProps {
-  onLogin: (user: User) => void;
+  onLogin: (user: User, isSuperAdmin: boolean) => void;
+  /** Pendaftarannya masuk antrean; App yang menampilkan layar tunggunya. */
+  onPending: (status: { status: 'pending' | 'rejected'; registration: RegistrationInfo | null }) => void;
 }
 
-export default function Login({ onLogin }: LoginProps) {
+export default function Login({ onLogin, onPending }: LoginProps) {
   const [view, setView] = useState<'login' | 'register'>('login');
 
   // Registration Form State
@@ -28,8 +30,15 @@ export default function Login({ onLogin }: LoginProps) {
    *
    * Dulu: baca sendiri dokumen users di Firestore, dan naikkan role jadi admin
    * dari sisi browser kalau emailnya cocok. Sekarang keduanya dikerjakan
-   * /api/auth/sync di server, berdasarkan SUPER_ADMIN_EMAIL di .env -- kode
+   * /api/auth/sync di server, berdasarkan SUPER_ADMIN_EMAILS di .env -- kode
    * yang berjalan di browser tidak bisa dipercaya untuk memberi hak akses.
+   *
+   * Sejak pendaftaran dibatasi, jawaban sync punya empat kemungkinan:
+   *
+   *   active        masuk
+   *   unregistered  tampilkan form "Lengkapi Profil"
+   *   pending       tampilkan layar menunggu persetujuan
+   *   rejected      tampilkan penolakannya
    */
   const handleGoogleLogin = async () => {
     setError('');
@@ -39,9 +48,16 @@ export default function Login({ onLogin }: LoginProps) {
 
       const sesi = await syncSession();
 
-      if (sesi.registered && sesi.user) {
+      if (sesi.status === 'active' && sesi.user) {
         addAuditLog(sesi.user, 'Login/Sync');
-        onLogin(sesi.user);
+        onLogin(sesi.user, sesi.isSuperAdmin);
+        return;
+      }
+
+      // Sudah pernah mendaftar. Formulirnya sengaja tidak ditawarkan lagi:
+      // mengisinya ulang hanya akan dijawab 409 oleh server.
+      if (sesi.status === 'pending' || sesi.status === 'rejected') {
+        onPending({ status: sesi.status, registration: sesi.registration });
         return;
       }
 
@@ -82,20 +98,48 @@ export default function Login({ onLogin }: LoginProps) {
     setLoading(true);
     try {
       // id, email, dan role tidak dikirim: ketiganya diambil server dari token.
-      const newUser = await registerProfile({
+      const hasil = await registerProfile({
         name: regName.trim(),
         nik: regNik.trim(),
         divisi: regDivisi,
       });
 
-      addAuditLog(newUser, 'Login/Sync');
-      onLogin(newUser);
+      // Masuk antrean persetujuan. Ini keberhasilan, bukan kegagalan: server
+      // menjawab 202 dan sengaja tidak mengirim `user`, karena barisnya di
+      // tabel users memang belum dibuat.
+      if (hasil.status === 'pending') {
+        onPending({ status: 'pending', registration: hasil.registration });
+        return;
+      }
+
+      // Profil langsung aktif. Hanya terjadi untuk super admin, atau saat
+      // REGISTRATION_REQUIRE_APPROVAL dimatikan di .env.
+      //
+      // Status super admin ditanyakan sekali lagi lewat /auth/status: jawaban
+      // register tidak memuatnya, dan super admin baru justru orang yang paling
+      // butuh melihat menu "Kelola Super Admin" sejak login pertamanya.
+      let superAdmin = false;
+
+      try {
+        superAdmin = (await getStatus()).isSuperAdmin;
+      } catch (e) {
+        // Bukan alasan untuk menggagalkan login yang sudah berhasil. Menunya
+        // muncul setelah halaman dimuat ulang.
+        console.error('Gagal memeriksa status super admin', e);
+      }
+
+      addAuditLog(hasil.user, 'Login/Sync');
+      onLogin(hasil.user, superAdmin);
     } catch (e: any) {
       if (e instanceof ApiError) {
-        // NIK yang sudah dipakai user lain dijawab 422 dengan errors.nik.
-        // Yang ringkas ditempel di bawah input supaya jelas field mana yang
-        // salah; penjelasan panjangnya tetap di kotak atas. Isian form sengaja
-        // tidak dikosongkan -- yang perlu diperbaiki cuma NIK-nya.
+        // NIK yang tidak bisa dipakai dijawab 422 dengan errors.nik. Yang
+        // ringkas ditempel di bawah input supaya jelas field mana yang salah;
+        // penjelasan panjangnya tetap di kotak atas. Isian form sengaja tidak
+        // dikosongkan -- yang perlu diperbaiki cuma NIK-nya.
+        //
+        // Pesannya sama persis untuk semua sebab -- tidak dikenal, sudah
+        // dipakai, sedang diantre. Jangan menambahkan tebakan di sini: itu
+        // mengembalikan kebocoran NIK yang baru ditutup di server.
         setNikError(e.field('nik') || '');
         setError(e.message);
       } else {

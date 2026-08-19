@@ -1,4 +1,4 @@
-import { ApiError, api, apiRequest } from './api';
+import { api, apiRequest } from './api';
 
 /**
  * User, sesi, dan catatan audit -- seluruhnya lewat backend Slim.
@@ -35,11 +35,69 @@ export interface ProfilePrefill {
   name: string;
 }
 
+/**
+ * Empat keadaan sebuah akun Google di mata backend.
+ *
+ *   active        punya baris di tabel users, boleh masuk
+ *   unregistered  belum pernah mendaftar -- tampilkan form "Lengkapi Profil"
+ *   pending       sudah mendaftar, menunggu persetujuan admin
+ *   rejected      pendaftarannya ditolak
+ *
+ * Tiga yang terakhir sama-sama TIDAK punya baris users, jadi semua endpoint
+ * lain menjawab 403. Jangan memuat dashboard untuk salah satunya.
+ */
+export type RegistrationStatus = 'active' | 'unregistered' | 'pending' | 'rejected';
+
+/** Isi pendaftaran, dikirim balik kepada pemiliknya sendiri. */
+export interface RegistrationInfo {
+  name: string;
+  nik: string;
+  divisi: string;
+  email: string;
+  requested_at: string | null;
+  /** Keduanya hanya ada saat status = 'rejected'. */
+  rejected_at?: string | null;
+  reason?: string | null;
+}
+
 export interface SyncResult {
+  status: RegistrationStatus;
+  /** Sama artinya dengan status === 'active'. Dipertahankan supaya kode lama tidak rusak. */
   registered: boolean;
   user: User | null;
   prefill: ProfilePrefill | null;
+  /** Terisi saat status 'pending' atau 'rejected'. */
+  registration: RegistrationInfo | null;
+  /** Menentukan apakah menu "Kelola super admin" ditampilkan. Bukan pengaman. */
+  isSuperAdmin: boolean;
 }
+
+/** Bentuk mentah jawaban /auth/sync dan /auth/status. */
+interface StatusResponse {
+  registered: boolean;
+  status?: RegistrationStatus;
+  user: User | null;
+  prefill?: ProfilePrefill;
+  registration?: RegistrationInfo;
+  is_super_admin?: boolean;
+}
+
+/** Satu penerjemah untuk /auth/sync dan /auth/status, yang isinya memang sama. */
+const bacaStatus = (data: StatusResponse): SyncResult => {
+  const registered = data.registered === true;
+
+  return {
+    // Backend lama (sebelum fitur persetujuan) tidak mengirim `status` sama
+    // sekali. Diturunkan dari `registered` supaya frontend ini tetap jalan
+    // kalau backendnya belum sempat diperbarui.
+    status: data.status ?? (registered ? 'active' : 'unregistered'),
+    registered,
+    user: data.user ?? null,
+    prefill: data.prefill ?? null,
+    registration: data.registration ?? null,
+    isSuperAdmin: data.is_super_admin === true,
+  };
+};
 
 /**
  * POST /api/auth/sync -- dipanggil sekali setiap selesai login Google, dan
@@ -50,21 +108,37 @@ export interface SyncResult {
  * registered = false, dan isi awal formnya ada di prefill.
  *
  * Promosi super admin juga terjadi di sini, di server, berdasarkan
- * SUPER_ADMIN_EMAIL di .env -- bukan lagi ditulis frontend ke Firestore.
+ * SUPER_ADMIN_EMAILS di .env ditambah yang diangkat lewat AdminPanel -- bukan
+ * lagi ditulis frontend ke Firestore.
+ *
+ * Sejak ada persetujuan admin, jawabannya punya empat kemungkinan, bukan dua.
+ * Lihat RegistrationStatus di atas.
  */
-export const syncSession = async (): Promise<SyncResult> => {
-  const data = await api.post<{
-    registered: boolean;
-    user: User | null;
-    prefill?: ProfilePrefill;
-  }>('/api/auth/sync');
+export const syncSession = async (): Promise<SyncResult> =>
+  bacaStatus(await api.post<StatusResponse>('/api/auth/sync'));
 
-  return {
-    registered: data.registered === true,
-    user: data.user ?? null,
-    prefill: data.prefill ?? null,
-  };
-};
+/**
+ * GET /api/auth/status -- isi yang sama dengan /auth/sync, tanpa efek samping.
+ *
+ * Dipakai tombol "Periksa lagi" di layar menunggu persetujuan. Ini satu-satunya
+ * endpoint yang bisa dipanggil pendaftar yang belum disetujui; sisanya menjawab
+ * 403 karena barisnya di tabel users memang belum ada.
+ */
+export const getStatus = async (): Promise<SyncResult> =>
+  bacaStatus(await api.get<StatusResponse>('/api/auth/status'));
+
+/**
+ * Hasil pendaftaran. Dua keberhasilan yang berbeda, bukan satu.
+ *
+ *   active   201 -- baris users langsung dibuat, user boleh masuk sekarang
+ *   pending  202 -- masuk antrean, menunggu disetujui admin
+ *
+ * Versi sebelumnya menganggap jawaban tanpa `user` sebagai kegagalan server dan
+ * melempar 500. Sejak Lapis 2 menyala, jawaban seperti itu justru yang normal.
+ */
+export type RegisterResult =
+  | { status: 'active'; user: User; registration: null }
+  | { status: 'pending'; user: null; registration: RegistrationInfo | null };
 
 /**
  * POST /api/auth/register -- membuat baris users untuk akun Google yang baru.
@@ -73,20 +147,32 @@ export const syncSession = async (): Promise<SyncResult> => {
  * diambil server dari token; kalau ketiganya ikut dikirim, backend
  * mengabaikannya.
  *
- * NIK kembar dijawab 422 dengan errors.nik -- lihat penanganannya di Login.tsx.
+ * NIK yang tidak bisa dipakai dijawab 422 dengan errors.nik -- lihat
+ * penanganannya di Login.tsx. Pesannya SELALU sama apa pun sebabnya (tidak
+ * dikenal, sudah dipakai, atau sedang diantre orang lain); jangan menambahkan
+ * tebakan di sini, itu mengembalikan kebocoran yang ditutup di server.
  */
 export const registerProfile = async (input: {
   name: string;
   nik: string;
   divisi: string;
-}): Promise<User> => {
-  const data = await api.post<{ registered: boolean; user: User | null }>('/api/auth/register', input);
+}): Promise<RegisterResult> => {
+  const data = await api.post<{
+    registered: boolean;
+    status?: RegistrationStatus;
+    user: User | null;
+    registration?: RegistrationInfo;
+  }>('/api/auth/register', input);
 
-  if (!data.user) {
-    throw new ApiError(500, 'Profil tersimpan, tapi server tidak mengembalikan datanya. Coba muat ulang halaman.');
+  // Dua keberhasilan yang berbeda: 201 (profil langsung aktif) dan 202 (masuk
+  // antrean). Dibedakan lewat isi `status`, bukan kode HTTP -- apiRequest hanya
+  // meneruskan isi amplopnya. `user` yang kosong pada 202 itu disengaja, bukan
+  // jawaban yang cacat.
+  if (data.user) {
+    return { status: 'active', user: data.user, registration: null };
   }
 
-  return data.user;
+  return { status: 'pending', user: null, registration: data.registration ?? null };
 };
 
 /**

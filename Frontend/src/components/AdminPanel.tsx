@@ -1,19 +1,28 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { User, DeleteMode, updateUserRole, AuditLogItem, fetchAuditLogs, fetchUsers as fetchUsersApi, updateUserProfileByAdmin, deleteUserAndLogs } from '../utils/auth';
-import { Users, History, Bug, Settings, Image as ImageIcon, X, Edit, Trash2 } from 'lucide-react';
+import { Users, History, Bug, Settings, Image as ImageIcon, X, Edit, Trash2, UserCheck } from 'lucide-react';
 import { updateBugReportStatus, BugReport, BugStatus, bugStatusClass, fetchBugReport, fetchBugReports } from '../utils/bugReport';
 import { fetchMaintenance, setMaintenance as simpanMaintenance } from '../utils/settings';
+import { fetchRegistrations } from '../utils/registrations';
 import { useDivisions } from '../utils/masterData';
 import { ApiError } from '../utils/api';
+import ApprovalQueue from './ApprovalQueue';
+import AccessSettings from './AccessSettings';
 
 interface AdminPanelProps {
   onRefreshLogs?: () => void;
   currentUser: User;
+  /** Dari /api/auth/sync. Menentukan tampil atau tidaknya kartu "Kelola Super Admin". */
+  isSuperAdmin: boolean;
+  /** Dipanggil kalau super admin menurunkan dirinya sendiri. */
+  onSuperAdminChange: (masihSuperAdmin: boolean) => void;
 }
+
+type AdminTab = 'users' | 'approvals' | 'audit' | 'bugs' | 'settings';
 
 // --- GLOBAL PERSISTENCE FOR ADMIN PANEL ---
 // These variables survive component unmounts but reset on browser refresh
-let pActiveTab: 'users' | 'audit' | 'bugs' | 'settings' = 'users';
+let pActiveTab: AdminTab = 'users';
 let pFilterRole: 'all' | 'karyawan' | 'atasan' | 'admin' = 'all';
 let pFilterUserId: string = 'all';
 let pFilterDivisiUsers: string = 'all';
@@ -22,9 +31,14 @@ const initialTodayStr = new Date(new Date().getTime() - new Date().getTimezoneOf
 let pAuditStartDate: string = initialTodayStr;
 let pAuditEndDate: string = initialTodayStr;
 
-export default function AdminPanel({ onRefreshLogs, currentUser }: AdminPanelProps) {
-  const [activeTab, _setActiveTab] = useState<'users' | 'audit' | 'bugs' | 'settings'>(pActiveTab);
-  const setActiveTab = (val: 'users' | 'audit' | 'bugs' | 'settings') => { pActiveTab = val; _setActiveTab(val); };
+export default function AdminPanel({ onRefreshLogs, currentUser, isSuperAdmin, onSuperAdminChange }: AdminPanelProps) {
+  const [activeTab, _setActiveTab] = useState<AdminTab>(pActiveTab);
+  const setActiveTab = (val: AdminTab) => { pActiveTab = val; _setActiveTab(val); };
+
+  // Jumlah pendaftaran yang menunggu, untuk penanda di judul tab. Diambil
+  // sekali saat panel dibuka, bukan hanya saat tabnya dibuka -- kalau menunggu
+  // sampai tabnya dibuka, tidak ada yang pernah tahu ada orang mengantre.
+  const [pendingCount, setPendingCount] = useState(0);
 
   const [users, setUsers] = useState<User[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
@@ -82,6 +96,12 @@ export default function AdminPanel({ onRefreshLogs, currentUser }: AdminPanelPro
   useEffect(() => {
     fetchUsers();
     fetchMaintenance().then(setIsMaintenance);
+
+    // Kegagalannya cukup dicatat: penanda yang tidak muncul lebih baik daripada
+    // seluruh Admin Panel gagal dibuka karena satu berkas JSON tidak terbaca.
+    fetchRegistrations('pending')
+      .then((daftar) => setPendingCount(daftar.length))
+      .catch((e) => console.error('Gagal menghitung antrean pendaftaran', e));
   }, []);
 
   const muatAuditLogs = () => {
@@ -309,7 +329,26 @@ export default function AdminPanel({ onRefreshLogs, currentUser }: AdminPanelPro
           >
             <Users className="w-4 h-4" /> User Management
           </button>
-          <button 
+          <button
+            onClick={() => setActiveTab('approvals')}
+            className={`px-4 py-2 text-sm font-bold rounded-lg transition-colors flex items-center gap-2 ${
+              activeTab === 'approvals' ? 'bg-[#143c68] text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            <UserCheck className="w-4 h-4" /> Persetujuan
+            {/* Penanda jumlah. Tanpa ini tidak ada yang tahu ada orang
+                menunggu, dan yang menunggu tidak punya cara mengingatkan --
+                selama belum disetujui dia tidak bisa memanggil endpoint apa
+                pun selain status dirinya sendiri. */}
+            {pendingCount > 0 && (
+              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold min-w-[1.25rem] ${
+                activeTab === 'approvals' ? 'bg-white text-[#143c68]' : 'bg-red-600 text-white'
+              }`}>
+                {pendingCount}
+              </span>
+            )}
+          </button>
+          <button
             onClick={() => setActiveTab('audit')}
             className={`px-4 py-2 text-sm font-bold rounded-lg transition-colors flex items-center gap-2 ${
               activeTab === 'audit' ? 'bg-[#143c68] text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
@@ -415,6 +454,13 @@ export default function AdminPanel({ onRefreshLogs, currentUser }: AdminPanelPro
              </table>
            </div>
            </div>
+        )}
+
+        {activeTab === 'approvals' && (
+          <ApprovalQueue
+            onPendingCountChange={setPendingCount}
+            onApproved={fetchUsers}
+          />
         )}
 
         {activeTab === 'audit' && (
@@ -641,6 +687,12 @@ export default function AdminPanel({ onRefreshLogs, currentUser }: AdminPanelPro
                 </label>
               </div>
             </div>
+
+            <AccessSettings
+              isSuperAdmin={isSuperAdmin}
+              currentUserEmail={currentUser.email}
+              onSuperAdminChange={onSuperAdminChange}
+            />
           </div>
         )}
       </div>

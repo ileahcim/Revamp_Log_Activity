@@ -26,7 +26,7 @@ MariaDB di Hostinger.
 11. [Kalau ada masalah](#11-kalau-ada-masalah)
 12. [Pembatasan pendaftaran](#12-pembatasan-pendaftaran)
 13. [Super admin dan serah terima](#13-super-admin-dan-serah-terima)
-14. [Yang masih perlu dikerjakan di frontend](#14-yang-masih-perlu-dikerjakan-di-frontend)
+14. [Frontend: apa yang sudah tersambung](#14-frontend-apa-yang-sudah-tersambung)
 
 ---
 
@@ -360,10 +360,10 @@ switch (r.data.status) {
 
 Field `registered` yang lama tetap dikirim dan artinya tidak berubah, jadi
 frontend yang belum diperbarui tetap jalan — `pending` dan `rejected` sama-sama
-terbaca sebagai `registered: false`. Yang terjadi tanpa pembaruan frontend:
+terbaca sebagai `registered: false`. Yang terjadi pada frontend versi lama:
 pendaftar yang sudah mengantre akan terus melihat form "Lengkapi Profil" dan
 menerima **409** kalau menekan simpan lagi. Tidak berbahaya, tapi
-membingungkan — lihat [bagian 14](#14-yang-masih-perlu-dikerjakan-di-frontend).
+membingungkan — lihat [bagian 14](#14-frontend-apa-yang-sudah-tersambung).
 
 Yang dipercaya dari body hanya `name`, `nik`, dan `divisi`. `id`, `email`, dan
 `role` diambil dari token — kalau ketiganya ikut dikirim, backend mengabaikannya.
@@ -1093,12 +1093,13 @@ sementara Lapis 1 dengan `REGISTRATION_REQUIRE_KNOWN_NIK=false`.
 
 **Pendaftar melihat "Profil tersimpan, tapi server tidak mengembalikan
 datanya".**
-Frontend belum diperbarui untuk jawaban **202**. `registerProfile()` di
-`utils/auth.ts` melempar error kalau `data.user` kosong, dan pendaftaran yang
-masuk antrean memang mengembalikan `user: null`. Permintaannya **tetap masuk
-antrean** — pesannya saja yang salah. Sampai frontend disesuaikan, jalankan
-`REGISTRATION_REQUIRE_APPROVAL=false`; Lapis 1 tetap bekerja. Lihat
-[bagian 14](#14-yang-masih-perlu-dikerjakan-di-frontend).
+Frontend yang dipasang lebih tua daripada backend. Pesan itu berasal dari
+`registerProfile()` versi lama yang memperlakukan jawaban **202** sebagai
+kegagalan, padahal `user: null` di sana memang disengaja. Permintaannya **tetap
+masuk antrean** — pesannya saja yang salah. Build ulang frontend
+(`cd Frontend && npm run build`), atau jalankan
+`REGISTRATION_REQUIRE_APPROVAL=false` sampai sempat. Lihat
+[bagian 14](#14-frontend-apa-yang-sudah-tersambung).
 
 **Semua super admin hilang setelah deploy ulang.**
 `storage/super-admins.json` ikut tertimpa. Yang di `.env` tidak terpengaruh —
@@ -1344,75 +1345,78 @@ hPanel. Tidak ada jalan lain, dan itu memang disengaja.
 
 ---
 
-## 14. Yang masih perlu dikerjakan di frontend
+## 14. Frontend: apa yang sudah tersambung
 
-Backend sudah siap; frontend **belum disentuh sama sekali**. Berikut yang perlu
-diubah.
+Frontend sudah menyusul; kedua lapis pembatasan bisa dinyalakan sekarang. Berkas
+yang terlibat, supaya jelas di mana mencarinya nanti:
 
-> **Sampai ini dikerjakan, jalankan `REGISTRATION_REQUIRE_APPROVAL=false`.**
-> Lapis 1 tetap bekerja penuh — NIK asing sudah tertolak — sementara Lapis 2
-> menunggu layarnya ada. Kalau dinyalakan sekarang, pendaftar yang masuk antrean
-> akan melihat pesan yang salah (lihat butir pertama di bawah).
+| Berkas | Isinya |
+|---|---|
+| `src/utils/auth.ts` | `RegistrationStatus`, `getStatus()`, `registerProfile()` yang mengerti 202 |
+| `src/utils/registrations.ts` | seluruh endpoint admin: antrean, daftar izin NIK, super admin |
+| `src/components/RegistrationStatus.tsx` | layar "menunggu persetujuan" dan "ditolak" |
+| `src/components/ApprovalQueue.tsx` | tab **Persetujuan** di AdminPanel |
+| `src/components/AccessSettings.tsx` | dua kartu di tab **System Settings** |
+| `src/components/ConfirmDialog.tsx` | kotak konfirmasi bersama untuk ketiganya |
 
-### `src/utils/auth.ts`
+Yang berubah pada berkas yang sudah ada: `App.tsx` menyimpan status pendaftaran
+terpisah dari `currentUser`, `Login.tsx` mencabang ke empat status, dan
+`AdminPanel.tsx` menerima `isSuperAdmin` lalu meneruskannya ke `AccessSettings`.
 
-- **`SyncResult` perlu field `status`**: `'active' | 'unregistered' | 'pending' |
-  'rejected'`, plus `registration` dan `is_super_admin`. Field `registered` yang
-  lama tetap dikirim server, jadi tidak ada yang rusak selama masa transisi.
-- **`registerProfile()` harus menangani 202.** Sekarang fungsi itu melempar
-  `ApiError(500, 'Profil tersimpan, tapi server tidak mengembalikan datanya')`
-  kalau `data.user` kosong — dan jawaban 202 memang mengembalikan `user: null`.
-  Pendaftarannya sebenarnya berhasil masuk antrean; hanya pesannya yang salah.
-  Return type-nya perlu berubah dari `Promise<User>` menjadi sesuatu yang bisa
-  mewakili dua keadaan.
-- **Fungsi baru** untuk endpoint admin: daftar antrean, setujui, tolak, buka
-  kembali, daftar izin NIK (baca/tambah/hapus), dan super admin
-  (baca/angkat/turunkan).
-- **`getStatus()`** yang memanggil `GET /api/auth/status`, untuk layar tunggu.
+### Alur yang dilihat pendaftar
 
-### `src/components/Login.tsx`
+1. Login Google seperti biasa. `POST /api/auth/sync` menjawab `unregistered`.
+2. Isi formulir "Lengkapi Profil". NIK yang tidak lolos Lapis 1 dijawab **422**
+   dan pesannya ditempel di bawah input NIK — sama persis apa pun sebabnya.
+3. Yang lolos dijawab **202**. Layar berganti menjadi "Menunggu Persetujuan",
+   berisi nama, NIK, divisi, dan tombol **Periksa lagi**.
+4. Tombol itu memanggil `GET /api/auth/status`. Tidak ada polling otomatis:
+   persetujuan bisa makan waktu berhari-hari, dan menanyakannya tiap beberapa
+   detik hanya membebani hosting bersama.
+5. Begitu disetujui, tombol yang sama membawanya masuk tanpa login ulang.
 
-Cabang `if (r.registered)` sekarang punya empat kemungkinan, bukan dua. Lihat
-contoh `switch` di [bagian 6](#6-autentikasi).
+Selama menunggu, aplikasi **tidak pernah** memuat dashboard. Layar tunggu itu
+berdiri sendiri di depan aplikasi, karena semua endpoint lain memang menjawab
+403 — memuat lalu gagal sepotong-sepotong jauh lebih membingungkan.
 
-### Layar baru: "Menunggu Persetujuan"
+Kalau admin membatalkan penolakan (`DELETE /api/registrations/{uid}`), tombol
+**Periksa lagi** akan mendapati status `unregistered` dan mengembalikan yang
+bersangkutan ke halaman login untuk mengisi formulir lagi.
 
-Muncul saat `status === 'pending'`. Isinya nama, NIK, dan divisi yang didaftarkan
-(ada di `data.registration`), plus tombol "Periksa lagi" yang memanggil
-`GET /api/auth/status`. Jangan polling otomatis rapat-rapat — persetujuan bisa
-makan waktu berhari-hari.
+### Yang dilihat admin
 
-Layar serupa untuk `status === 'rejected'`, menampilkan
-`data.registration.reason`.
+**Tab Persetujuan** — daftar `pending` dan `rejected` lewat satu dropdown.
+Jumlah yang menunggu muncul sebagai penanda merah di judul tab, diambil saat
+Admin Panel dibuka, bukan saat tabnya dibuka: yang sedang menunggu tidak punya
+cara lain untuk mengingatkan.
 
-Selama menunggu, **tidak ada endpoint lain yang bisa dipanggil**. Semua menjawab
-403 dengan pesan "Pendaftaran Anda sedang menunggu persetujuan admin", jadi
-jangan biarkan aplikasi memuat dashboard lalu gagal sepotong-sepotong.
+Menyetujui membuka kotak konfirmasi berisi pilihan role, bawaannya `karyawan`.
+Penolakan `POST .../approve` — NIK yang keburu dipakai orang lain, divisi yang
+dinonaktifkan — ditampilkan **di dalam** kotak itu, bukan di belakangnya.
 
-### `src/components/AdminPanel.tsx`
+Menolak meminta alasan (opsional, maksimal 500 karakter) yang ikut ditampilkan
+kepada yang ditolak.
 
-Tiga hal baru:
+**Tab System Settings** mendapat dua kartu di bawah Maintenance Mode:
 
-1. **Tab "Persetujuan"** — daftar dari `GET /api/registrations`, tiap baris
-   dengan tombol Setujui (pilih role dulu: `karyawan` / `atasan` / `admin`) dan
-   Tolak (dengan kolom alasan). Tambahkan penanda jumlah antrean di judul tab;
-   tanpa itu tidak ada yang tahu ada orang menunggu.
-2. **Daftar izin NIK** — di tab Pengaturan. Form satu baris (NIK + catatan) dan
-   daftar yang bisa dihapus.
-3. **Kelola super admin** — hanya ditampilkan kalau `is_super_admin` bernilai
-   true. `GET /api/super-admins` mengembalikan `removable` per baris; pakai itu
-   untuk menonaktifkan tombol hapus pada alamat yang berasal dari `.env`, jangan
-   menawarkan tombol yang sudah pasti ditolak server.
+- **Daftar Izin NIK** — untuk semua admin. Form satu baris (NIK + catatan) dan
+  daftarnya, dengan tombol hapus per baris.
+- **Kelola Super Admin** — hanya muncul kalau `is_super_admin` bernilai true.
+  Tombol hapus dinonaktifkan (bukan disembunyikan) untuk alamat dari `.env`,
+  lengkap dengan penjelasannya di `title`: admin perlu tahu alamat itu ada dan
+  kenapa tidak bisa disentuh dari sini.
 
-### Penanganan response baru
+Super admin yang menurunkan dirinya sendiri langsung kehilangan kartu itu tanpa
+perlu memuat ulang halaman, dan pesannya muncul lewat `alert` — kalau tidak,
+jawabannya ikut hilang bersama kartunya.
 
-| Kode | Dari | Artinya |
-|---|---|---|
-| 202 | `POST /api/auth/register` | masuk antrean, `user` sengaja `null` |
-| 403 | endpoint mana pun | pesan sudah membedakan menunggu / ditolak / belum daftar |
-| 403 | `/api/super-admins/*` | "Hanya super admin yang boleh…" |
-| 422 | `POST /api/auth/register` | `errors.nik` — tampilkan di bawah input NIK |
+### Dua hal yang sengaja dibiarkan
 
-Pesan 422 untuk NIK **selalu sama** apa pun sebabnya. Jangan menambahkan tebakan
-di frontend seperti "mungkin NIK ini sudah dipakai" — itu mengembalikan kebocoran
-yang baru saja ditutup di server.
+**Pesan dari server tidak pernah ditelan.** Setiap aksi admin menampilkan
+`message` dari server apa adanya, karena di sanalah peringatan "tindakan ini
+gagal dicatat di audit log" muncul. Menggantinya dengan kalimat buatan sendiri
+membuat persetujuan yang tidak tercatat lewat tanpa ada yang tahu.
+
+**Pesan 422 untuk NIK selalu sama.** Jangan menambahkan tebakan di frontend
+seperti "mungkin NIK ini sudah dipakai" — itu mengembalikan kebocoran yang baru
+saja ditutup di server.
