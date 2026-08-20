@@ -721,6 +721,12 @@ dan tidak punya tabel `settings`. Body `PUT`: `{ "active": true }`.
 
 ## 8. Deployment ke Hostinger
 
+> Untuk pemasangan yang berjalan sekarang — **arpgrs.com/log_activity**, dengan
+> backend di subfolder `/log_activity/api` — ikuti [`DEPLOY.md`](../DEPLOY.md)
+> di akar repo. Di sana langkahnya lengkap berikut frontend, urutan unggah,
+> izin folder, dan daftar uji setelah selesai. Bagian ini menjelaskan
+> susunannya secara umum, untuk pemasangan di akar domain.
+
 ### Susunan folder di server
 
 ```
@@ -829,13 +835,29 @@ curl https://domain-anda.com/api/health
 Harus menjawab `{"success":true,...}`. Kalau yang muncul halaman 404 Hostinger,
 `.htaccess` belum terbaca atau `mod_rewrite` mati.
 
-### Kalau nama foldernya bukan `api`
+### Kalau letaknya bukan di akar domain
 
-Isi `APP_BASE_PATH` di `.env`, contoh untuk folder `backend`:
+`APP_BASE_PATH` berisi bagian alamat **di depan `/api`**, karena route Slim
+semuanya dimulai dari `/api/...`:
 
-```dotenv
-APP_BASE_PATH=/backend
-```
+| Alamat backend | APP_BASE_PATH |
+|---|---|
+| `https://domain.com/api/health` | kosong |
+| `https://domain.com/log_activity/api/health` | `/log_activity` |
+| `https://domain.com/backend/health` | `/backend` (folder tanpa `api`) |
+
+Ditulis dengan garis miring di depan, tanpa garis miring di belakang. Salah di
+sini menghasilkan gejala yang khas: setiap endpoint dijawab **404 berbentuk
+JSON** — artinya PHP jalan, `.htaccess` terbaca, hanya Slim yang tidak
+mengenali alamatnya.
+
+### Melindungi folder `app/`
+
+Berkas `.htaccess` penolak untuk folder itu sudah tersedia siap unggah di
+[`deploy/app/.htaccess`](deploy/app/.htaccess), lengkap dengan namanya, jadi
+tidak perlu dibuat manual di server. Sebagai lapis kedua, `src/`, `routes/`,
+dan `storage/` masing-masing juga membawa `.htaccess` sendiri yang ikut
+terunggah bersama foldernya.
 
 ---
 
@@ -851,9 +873,13 @@ Backend/
 ├── 03_align_master_data.sql  penyelarasan master data dengan frontend
 ├── 04_legacy_user.sql        user penampung data lama
 ├── 05_widen_sn.sql           tech_logs.sn: VARCHAR(100) -> TEXT
+├── .env.production.example   contoh konfigurasi production (Hostinger)
 ├── public/
 │   ├── index.php             satu-satunya pintu masuk
 │   └── .htaccess             rewrite + penerusan header Authorization
+├── deploy/
+│   └── app/
+│       └── .htaccess         penjaga folder app/ di server, tinggal diunggah
 ├── src/
 │   ├── Config/
 │   │   ├── Env.php           pembaca .env

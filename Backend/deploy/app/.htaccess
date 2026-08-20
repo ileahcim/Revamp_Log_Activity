@@ -1,0 +1,30 @@
+# ===========================================================================
+#  Penjaga folder app/ -- unggah ke public_html/log_activity/api/app/.htaccess
+# ===========================================================================
+#
+# Di dalam app/ ada .env (berisi password database), src/, routes/, vendor/,
+# dan storage/ (berisi antrean pendaftaran lengkap dengan nama dan NIK). Tidak
+# satu pun boleh bisa diunduh orang lewat alamat seperti
+# https://arpgrs.com/log_activity/api/app/.env
+#
+# JANGAN LEWATKAN BERKAS INI. Tanpa dia, alamat di atas menyajikan password
+# database Anda sebagai berkas teks biasa kepada siapa saja yang mengetiknya.
+# Setelah diunggah, buka alamat itu sekali: harus dijawab 403 atau 404, bukan
+# isi berkasnya.
+#
+# Berkas ini disimpan di Backend/deploy/app/ supaya bisa diseret langsung dari
+# FileZilla tanpa perlu diganti namanya di server -- namanya sudah benar.
+#
+# Aturan ini hanya menutup pintu dari arah browser. PHP tetap bisa membaca dan
+# menulis berkas di sini seperti biasa -- penjaganya Apache, bukan sistem
+# berkas, jadi require/include dari index.php sama sekali tidak terpengaruh.
+
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+
+# Apache 2.2 dan sebagian panel lama belum punya mod_authz_core.
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>

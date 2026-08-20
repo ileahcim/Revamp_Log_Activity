@@ -1,0 +1,31 @@
+# ===========================================================================
+#  storage/ tidak boleh dibuka lewat browser
+# ===========================================================================
+#
+# Ini yang paling sensitif dari semuanya, dan yang paling gampang terlupa:
+#
+#   registrations.json   antrean pendaftaran -- nama, email, dan NIK karyawan
+#   allowed-niks.json    daftar NIK yang diizinkan mendaftar
+#   super-admins.json    siapa saja yang punya kuasa penuh
+#   logs/                pesan error asli, kadang memuat potongan query
+#
+# Berbeda dengan src/ dan routes/ yang isinya kode, berkas di sini disajikan
+# apa adanya oleh Apache -- tidak ada PHP yang menghalangi. Tanpa berkas ini,
+# https://arpgrs.com/log_activity/api/app/storage/registrations.json cukup
+# untuk mengambil data pribadi seisi antrean.
+#
+# Lapis kedua, sama seperti src/.htaccess.
+#
+# Aturan ini hanya menutup pintu dari arah browser. PHP tetap bisa membaca dan
+# menulis berkas di sini seperti biasa -- penjaganya Apache, bukan sistem
+# berkas, jadi require/include dari index.php sama sekali tidak terpengaruh.
+
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+
+# Apache 2.2 dan sebagian panel lama belum punya mod_authz_core.
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>

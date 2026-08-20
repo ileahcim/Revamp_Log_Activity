@@ -35,9 +35,33 @@
 # Jangan pernah menampilkan daftar isi folder.
 Options -Indexes
 
-# File konfigurasi tidak boleh terbaca lewat browser, walaupun secara tidak
-# sengaja tersalin ke folder ini.
-<FilesMatch "^\.env|composer\.(json|lock)$">
+# Isi aplikasi duduk di dalam api/app/ pada susunan shared hosting. Penjaga
+# utamanya .htaccess di dalam folder app/ itu sendiri, yang tersedia siap pakai
+# di Backend/deploy/app/.htaccess. Baris di bawah adalah lapis luarnya: dia yang
+# menutup celah kalau berkas tersebut lupa terunggah -- berkas berawalan titik
+# gampang tak terlihat di FileZilla, dan kelalaian sekecil itu cukup untuk
+# menyajikan .env berikut password database kepada siapa pun yang menebak
+# alamatnya.
+#
+# 404, bukan 403: tidak perlu memberi tahu orang luar bahwa folder yang mereka
+# tebak memang ada. Tidak ada route Slim yang berbentuk /api/app, jadi tidak ada
+# yang bisa terganggu.
+<IfModule mod_alias.c>
+    RedirectMatch 404 (?i)/api/app(/|$)
+</IfModule>
+
+# Berkas yang tidak pernah boleh terbaca lewat browser, walaupun secara tidak
+# sengaja tersalin ke folder ini atau ke bawahnya:
+#
+#   .env, composer.*   konfigurasi dan susunan dependensi
+#   *.sql              seluruh struktur tabel (01_schema.sql dan kawan-kawan)
+#   *.md               README ini memuat contoh nilai dan letak berkas di server
+#   *.json, *.log      isi storage/: antrean pendaftaran, NIK, pesan error asli
+#
+# <FilesMatch> di .htaccess berlaku untuk folder ini dan seluruh isinya, jadi
+# satu aturan di sini ikut menjaga app/storage/ juga. API sendiri tidak
+# terpengaruh -- JSON-nya disusun PHP, bukan dibaca dari berkas .json.
+<FilesMatch "(?i)^\.env|^composer\.(json|lock)$|\.(sql|md|json|log)$">
     <IfModule mod_authz_core.c>
         Require all denied
     </IfModule>

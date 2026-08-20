@@ -1,0 +1,27 @@
+# ===========================================================================
+#  src/ tidak boleh dibuka lewat browser
+# ===========================================================================
+#
+# Isinya kode PHP aplikasi. Selama PHP hidup, membuka berkas .php lewat
+# browser hanya menjalankannya di luar konteks dan menghasilkan error; tapi
+# begitu PHP mati atau salah konfigurasi -- yang justru terjadi persis saat
+# ada masalah -- berkas yang sama disajikan apa adanya sebagai teks, lengkap
+# dengan seluruh logika hak akses di dalamnya.
+#
+# Ini lapis kedua. Lapis pertamanya berkas .htaccess di folder app/ satu
+# tingkat di atas. Yang ini ikut terunggah otomatis bersama folder src/, jadi
+# tetap ada walaupun yang pertama terlewat.
+#
+# Aturan ini hanya menutup pintu dari arah browser. PHP tetap bisa membaca dan
+# menulis berkas di sini seperti biasa -- penjaganya Apache, bukan sistem
+# berkas, jadi require/include dari index.php sama sekali tidak terpengaruh.
+
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+
+# Apache 2.2 dan sebagian panel lama belum punya mod_authz_core.
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>

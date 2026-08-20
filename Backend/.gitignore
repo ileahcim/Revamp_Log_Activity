@@ -1,6 +1,13 @@
 vendor/
+
+# Semua bentuk .env, kecuali contohnya. Polanya sengaja luas: saat deploy,
+# berkas .env yang sudah terisi password dibuat di deploy/app/ supaya bisa
+# diseret langsung dari FileZilla, dan baris di bawah yang menahannya agar
+# tidak pernah ikut ter-commit dari sana.
 .env
-.env.local
+.env.*
+!.env.example
+!.env.production.example
 storage/logs/*
 storage/cache/*
 !storage/logs/.gitkeep

@@ -1,0 +1,23 @@
+# ===========================================================================
+#  routes/ tidak boleh dibuka lewat browser
+# ===========================================================================
+#
+# Isinya daftar lengkap endpoint beserta penjaga hak aksesnya. Terbaca dari
+# luar, berkas ini adalah peta yang rapi tentang apa saja yang ada dan siapa
+# yang boleh memanggilnya.
+#
+# Lapis kedua, sama seperti src/.htaccess.
+#
+# Aturan ini hanya menutup pintu dari arah browser. PHP tetap bisa membaca dan
+# menulis berkas di sini seperti biasa -- penjaganya Apache, bukan sistem
+# berkas, jadi require/include dari index.php sama sekali tidak terpengaruh.
+
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+
+# Apache 2.2 dan sebagian panel lama belum punya mod_authz_core.
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>
