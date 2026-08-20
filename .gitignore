@@ -5,3 +5,8 @@ build/
 .env.local
 *.log
 .DS_Store
+
+# Berkas ZIP hasil pengemasan untuk deploy. Di dalam api.zip ada .env berikut
+# password database, jadi jangan sampai satu pun ikut ter-commit.
+# Lihat DEPLOY.md bagian 5.
+*.zip
