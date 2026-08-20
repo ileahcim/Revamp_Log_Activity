@@ -1,0 +1,77 @@
+# ===========================================================================
+#  Log Activity - frontend (hasil build React)
+#
+#  Berkas ini disimpan di Frontend/public/, dan Vite menyalin seluruh isi
+#  folder itu ke dist/ setiap kali `npm run build` dijalankan. Jadi tidak perlu
+#  dibuat manual di server -- yang perlu dipastikan hanya satu: berkas ini ikut
+#  terunggah. Berkas berawalan titik sering disembunyikan FileZilla; nyalakan
+#  dulu "Force showing hidden files" sebelum menyeret isi dist/.
+#
+#  Letaknya di server:  public_html/log_activity/.htaccess
+# ===========================================================================
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Backend punya .htaccess sendiri di dalam folder api/. Aturan di sini
+    # menyingkir lebih dulu supaya permintaan API tidak pernah berakhir di
+    # index.html. Gejala kalau baris ini hilang khas dan membingungkan: semua
+    # endpoint menjawab 200 berisi HTML, dan frontend melaporkan "server
+    # menjawab bukan JSON" seolah-olah backendnya rusak.
+    RewriteRule ^api/ - [L]
+
+    # Berkas dan folder yang benar-benar ada dilayani apa adanya.
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # Sisanya dikembalikan ke index.html. Aplikasi ini satu halaman: seluruh
+    # tampilan diatur React di dalam satu berkas HTML, tidak ada berkas .html
+    # lain yang bisa dituju. Tanpa baris ini, alamat yang salah ketik atau
+    # tersimpan di bookmark akan menampilkan halaman 404 milik Hostinger,
+    # bukan aplikasinya.
+    RewriteRule ^ index.html [L]
+</IfModule>
+
+# --- Ukuran unduhan --------------------------------------------------------
+# Berkas JS hasil build besar -- 2 MB lebih, memuat React, Firebase, pemindai
+# barcode, dan dua pustaka Excel sekaligus. Dikompresi, yang dikirim tinggal
+# sekitar seperempatnya. Ini yang paling terasa di jaringan lapangan.
+#
+# Ditulis dalam dua baris pendek, bukan satu baris disambung tanda "\" --
+# LiteSpeed (yang dipakai Hostinger) menerima .htaccess bergaya Apache tapi
+# tidak seluruh tata tulisnya, dan kesalahan tata tulis di sini berakibat
+# seluruh folder dijawab 500.
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/plain text/css text/javascript
+    AddOutputFilterByType DEFLATE application/javascript application/json image/svg+xml
+</IfModule>
+
+<IfModule mod_headers.c>
+    # Nama berkas hasil build memuat sidik jari isinya (index-BmSMc6MY.js).
+    # Isi berubah, namanya ikut berubah -- tidak ada cara berkas lama tersaji
+    # sebagai yang baru, jadi aman disimpan browser selama mungkin.
+    <FilesMatch "\.(js|css|woff2?|ttf|png|jpe?g|gif|svg|webp|ico)$">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </FilesMatch>
+
+    # index.html justru sebaliknya. Dialah satu-satunya berkas yang menyebut
+    # nama berkas JS terbaru, dan namanya sendiri tidak pernah berubah. Kalau
+    # ikut disimpan, orang bisa membuka versi lama berhari-hari setelah deploy
+    # lalu melapor "update-nya tidak muncul", padahal berkasnya sudah ada di
+    # server.
+    <FilesMatch "^index\.html$">
+        Header set Cache-Control "no-cache, must-revalidate"
+    </FilesMatch>
+
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+
+    # Permissions-Policy sengaja tidak diisi di sini. Pemindai barcode meminta
+    # izin kamera lewat getUserMedia; satu baris "camera=()" akan mematikannya
+    # tanpa pesan error yang bisa dilacak siapa pun.
+</IfModule>
+
+# Tidak ada yang perlu ditelusuri isi foldernya.
+Options -Indexes

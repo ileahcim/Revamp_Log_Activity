@@ -6,3 +6,7 @@ coverage/
 *.log
 .env*
 !.env.example
+# Alamat, bukan rahasia -- dan alamat itu bagian dari cara aplikasi ini
+# dipasang, jadi tempatnya memang di git. Lihat isinya sebelum menambah
+# baris baru di sana.
+!.env.production
