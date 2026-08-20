@@ -211,6 +211,10 @@ const MAKS_HALAMAN = 20;
  * Daftar user contoh (DEFAULT_USERS) sudah dibuang. Versi lamanya, kalau
  * collection users kosong, menuliskan empat user karangan ke database lalu
  * memakainya seolah nyata.
+ *
+ * Akun penampung data lama (legacy-unknown) tidak ada di daftar ini; backend
+ * yang mengeluarkannya. Bukan orang, jadi tidak perlu tampil di User Management
+ * maupun jadi kandidat pemilik NIK di Dashboard dan ActivityList.
  */
 export const fetchUsers = async (): Promise<User[]> => {
   const semua: User[] = [];

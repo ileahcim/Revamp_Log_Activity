@@ -29,7 +29,7 @@ final class UserModel extends BaseModel
     /**
      * Daftar user, opsional disaring.
      *
-     * @param array{search?: ?string, role?: ?string, division?: ?string} $filters
+     * @param array{search?: ?string, role?: ?string, division?: ?string, exclude_id?: ?string} $filters
      * @return list<array<string, mixed>>
      */
     public function all(array $filters, int $limit, int $offset): array
@@ -45,7 +45,7 @@ final class UserModel extends BaseModel
         );
     }
 
-    /** @param array{search?: ?string, role?: ?string, division?: ?string} $filters */
+    /** @param array{search?: ?string, role?: ?string, division?: ?string, exclude_id?: ?string} $filters */
     public function countAll(array $filters): int
     {
         [$where, $params] = $this->buildFilter($filters);
@@ -242,7 +242,7 @@ final class UserModel extends BaseModel
      * Yang disambung ke string SQL hanya potongan tetap yang ditulis di kode
      * ini; nilai dari user selalu masuk lewat parameter.
      *
-     * @param array{search?: ?string, role?: ?string, division?: ?string} $filters
+     * @param array{search?: ?string, role?: ?string, division?: ?string, exclude_id?: ?string} $filters
      * @return array{0: string, 1: array<string, mixed>}
      */
     private function buildFilter(array $filters): array
@@ -280,6 +280,19 @@ final class UserModel extends BaseModel
         if ($division !== null && $division !== '') {
             $conditions[]       = 'd.name = :division';
             $params['division'] = $division;
+        }
+
+        // Satu id yang dikeluarkan dari daftar. Dipakai UserController untuk
+        // menyembunyikan akun penampung data lama: barisnya tetap ada di
+        // database dan tetap bisa dibuka lewat /api/users/{id}, hanya tidak
+        // ikut terdaftar. Karena syaratnya ada di buildFilter, all() dan
+        // countAll() otomatis sepakat -- kalau disaring belakangan, jumlah
+        // baris dan angka total akan berbeda satu.
+        $excludeId = $filters['exclude_id'] ?? null;
+
+        if ($excludeId !== null && $excludeId !== '') {
+            $conditions[]         = 'u.id <> :exclude_id';
+            $params['exclude_id'] = $excludeId;
         }
 
         return [

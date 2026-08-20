@@ -404,7 +404,7 @@ Sudah jadi:
 | GET | `/api/super-admins` | **super admin** | siapa saja super admin |
 | POST | `/api/super-admins` | **super admin** | angkat, body `{ email }` |
 | DELETE | `/api/super-admins/{email}` | **super admin** | turunkan |
-| GET | `/api/users` | terdaftar | daftar user |
+| GET | `/api/users` | terdaftar | daftar user, tanpa akun penampung |
 | GET | `/api/tech-logs` | terdaftar | daftar aktivitas |
 | POST | `/api/tech-logs` | terdaftar | simpan aktivitas |
 | GET | `/api/tech-logs/{id}` | terdaftar | detail aktivitas |
@@ -440,6 +440,18 @@ Daftar user bisa dibaca semua user terdaftar, bukan admin saja. Ini mengikuti
 perilaku yang sudah berjalan: `App.tsx` memanggil `fetchUsersFirestore()` untuk
 setiap user yang login lalu meneruskan hasilnya ke Dashboard, ActivityList, dan
 komponen lain. Yang dibatasi khusus admin adalah ubah dan hapus.
+
+**Akun penampung tidak ikut didaftar.** Baris `LEGACY_USER_ID` (bawaan
+`legacy-unknown`, dibuat oleh `04_legacy_user.sql`) dikeluarkan dari
+`GET /api/users` — termasuk dari `search`, dari filter `role`/`division`, dan
+dari angka `meta.total`. Itu baris teknis tempat log hasil migrasi yang tidak
+teridentifikasi bersandar, bukan orang; menampilkannya di User Management hanya
+mengundang admin mengedit atau menghapus sesuatu yang bukan siapa-siapa.
+
+Yang tidak berubah: barisnya tetap ada di database, tetap terbaca lewat
+`GET /api/users/{id}`, tetap jadi tujuan `?mode=detach`, dan tetap ditolak
+kalau ada yang mencoba menghapusnya. Nama pada histori pun tidak bergantung
+padanya — `tech_logs` menyimpan `display_name` dan `nik_snapshot` sendiri.
 
 ### `/api/tech-logs`
 

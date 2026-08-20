@@ -46,15 +46,23 @@ final class UserController
      *   division nama divisi, contoh "Mekanik"
      *   limit    default API_DEFAULT_LIMIT, dibatasi API_MAX_LIMIT
      *   offset   lompati sekian baris pertama
+     *
+     * Akun penampung data lama (LEGACY_USER_ID) tidak ikut didaftar. Itu baris
+     * teknis tempat log hasil migrasi yang tidak teridentifikasi bersandar,
+     * bukan orang -- menampilkannya di User Management hanya mengundang admin
+     * mengedit atau menghapus sesuatu yang bukan siapa-siapa. Barisnya tetap
+     * ada di database dan tetap terbaca lewat GET /api/users/{id}; yang hilang
+     * hanya kehadirannya di daftar.
      */
     public function index(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
     {
         $query = $request->getQueryParams();
 
         $filters = [
-            'search'   => $this->trimmed($query['search'] ?? null),
-            'role'     => $this->oneOf($query['role'] ?? null, ['admin', 'atasan', 'karyawan']),
-            'division' => $this->trimmed($query['division'] ?? null),
+            'search'     => $this->trimmed($query['search'] ?? null),
+            'role'       => $this->oneOf($query['role'] ?? null, ['admin', 'atasan', 'karyawan']),
+            'division'   => $this->trimmed($query['division'] ?? null),
+            'exclude_id' => $this->legacyId(),
         ];
 
         $limit  = Pagination::limit($query['limit'] ?? null);
@@ -263,7 +271,7 @@ final class UserController
             return ApiResponse::error($response, 'Akun super admin tidak bisa dihapus.', 403);
         }
 
-        $legacyId = (string) Env::get('LEGACY_USER_ID', 'legacy-unknown');
+        $legacyId = $this->legacyId();
 
         // Baris penampung tempat log lama yang tidak teridentifikasi bersandar.
         // Menghapusnya berarti menghapus data hasil migrasi itu sendiri.
@@ -369,6 +377,17 @@ final class UserController
     }
 
     // -----------------------------------------------------------------------
+
+    /**
+     * Id akun penampung data lama, sesuai 04_legacy_user.sql.
+     *
+     * Dibaca dari .env, bukan ditulis tetap, supaya pemasangan yang memakai id
+     * lain tetap menyembunyikan dan melindungi baris yang benar.
+     */
+    private function legacyId(): string
+    {
+        return (string) Env::get('LEGACY_USER_ID', 'legacy-unknown');
+    }
 
     /**
      * Super admin sekarang bisa lebih dari satu: gabungan SUPER_ADMIN_EMAILS di
