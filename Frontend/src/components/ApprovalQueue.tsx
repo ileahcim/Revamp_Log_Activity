@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { CheckCircle2, RefreshCw, Undo2, UserCheck, UserX } from 'lucide-react';
+import { CheckCircle2, RefreshCw, ShieldAlert, TriangleAlert, Undo2, UserCheck, UserX, Users } from 'lucide-react';
 import {
+  NikCheck,
   RegistrationQueue,
   RegistrationRequest,
   approveRegistration,
@@ -31,6 +32,77 @@ interface ApprovalQueueProps {
 }
 
 type Role = 'karyawan' | 'atasan' | 'admin';
+
+/**
+ * Penanda NIK pada satu baris antrean. Tidak menampilkan apa-apa kalau NIK-nya
+ * bersih -- yang bersih adalah keadaan normal, dan menandainya hanya membuat
+ * yang bermasalah lebih sulit terlihat.
+ *
+ * Ada karena Lapis 1 (REGISTRATION_REQUIRE_KNOWN_NIK) dimatikan: NIK apa pun
+ * yang belum terpakai sekarang bisa masuk antrean, termasuk salah ketik dan
+ * termasuk NIK milik teknisi lama yang belum pernah login. Yang dulu disaring
+ * server sekarang disaring mata admin di halaman ini.
+ *
+ * Ketiganya bisa muncul bersamaan dan urutannya dari yang paling menentukan:
+ *
+ *   merah    NIK sudah dipakai user aktif. Menyetujuinya akan gagal --
+ *            users.nik UNIQUE -- jadi ini praktis selalu berarti tolak.
+ *   kuning   NIK kembar dengan pendaftar lain di antrean yang sama. Yang
+ *            disetujui duluan menang, yang kedua gagal.
+ *   abu-abu  Tidak ada jejaknya di tech_logs maupun daftar izin NIK. Persis
+ *            yang dulu ditolak Lapis 1. Bukan kesalahan dengan sendirinya --
+ *            karyawan yang benar-benar baru memang belum punya jejak.
+ *
+ * Semuanya berhenti di sini, di layar admin. Pendaftarnya sendiri tidak pernah
+ * diberi tahu apa pun tentang ini; balasan untuknya tetap kalimat netral yang
+ * sama. Kalau tidak, formulir pendaftaran berubah jadi alat menebak dan
+ * memanen NIK karyawan satu per satu.
+ */
+function PenandaNik({ check }: { check?: NikCheck }) {
+  if (!check) return null;
+
+  const { taken_by: dipakai, queued_by: kembar, known: dikenal } = check;
+
+  if (!dipakai && kembar.length === 0 && dikenal) return null;
+
+  const dasar =
+    'inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[11px] font-bold leading-tight';
+
+  return (
+    <div className="mt-1.5 flex flex-col gap-1 items-start font-sans">
+      {dipakai && (
+        <span
+          className={`${dasar} bg-red-100 text-red-700 border-red-200`}
+          title={`${dipakai.email} — menyetujui pendaftaran ini akan gagal, NIK harus unik.`}
+        >
+          <ShieldAlert className="w-3 h-3 shrink-0" />
+          NIK sudah dipakai &middot; {dipakai.name} ({dipakai.role})
+        </span>
+      )}
+
+      {kembar.length > 0 && (
+        <span
+          className={`${dasar} bg-amber-100 text-amber-800 border-amber-200`}
+          title={kembar.map((o) => `${o.name} (${o.email})`).join(', ')}
+        >
+          <Users className="w-3 h-3 shrink-0" />
+          NIK kembar di antrean &middot; {kembar[0].name}
+          {kembar.length > 1 && ` +${kembar.length - 1} lagi`}
+        </span>
+      )}
+
+      {!dikenal && (
+        <span
+          className={`${dasar} bg-slate-100 text-slate-600 border-slate-200`}
+          title="Tidak ada di tech_logs maupun daftar izin NIK. Wajar untuk karyawan yang benar-benar baru; curigai kalau bukan."
+        >
+          <TriangleAlert className="w-3 h-3 shrink-0" />
+          NIK tanpa jejak di sistem
+        </span>
+      )}
+    </div>
+  );
+}
 
 export default function ApprovalQueue({ onPendingCountChange, onApproved }: ApprovalQueueProps) {
   const [queue, setQueue] = useState<RegistrationQueue>('pending');
@@ -187,15 +259,18 @@ export default function ApprovalQueue({ onPendingCountChange, onApproved }: Appr
           <tbody className="divide-y divide-slate-200 bg-white">
             {rows.map((r) => (
               <tr key={r.uid} className="hover:bg-slate-50">
-                <td className="px-4 py-3 font-mono text-slate-500 whitespace-nowrap">
+                <td className="px-4 py-3 font-mono text-slate-500 whitespace-nowrap align-top">
                   {formatWaktu(menunggu ? r.requested_at : r.rejected_at)}
                 </td>
-                <td className="px-4 py-3 font-medium text-slate-800">{r.name}</td>
-                <td className="px-4 py-3 text-slate-600">{r.email}</td>
-                <td className="px-4 py-3 text-slate-600 font-mono">{r.nik}</td>
-                <td className="px-4 py-3 text-slate-600">{r.divisi}</td>
+                <td className="px-4 py-3 font-medium text-slate-800 align-top">{r.name}</td>
+                <td className="px-4 py-3 text-slate-600 align-top">{r.email}</td>
+                <td className="px-4 py-3 text-slate-600 align-top">
+                  <span className="font-mono">{r.nik}</span>
+                  <PenandaNik check={r.nik_check} />
+                </td>
+                <td className="px-4 py-3 text-slate-600 align-top">{r.divisi}</td>
                 {!menunggu && (
-                  <td className="px-4 py-3 text-slate-600">
+                  <td className="px-4 py-3 text-slate-600 align-top">
                     {r.reason || <span className="text-slate-400">tidak disebutkan</span>}
                   </td>
                 )}
@@ -256,6 +331,11 @@ export default function ApprovalQueue({ onPendingCountChange, onApproved }: Appr
               <p className="font-bold text-slate-800">{menyetujui.name}</p>
               <p className="text-slate-600">{menyetujui.email}</p>
               <p className="text-slate-600">NIK {menyetujui.nik} &middot; Divisi {menyetujui.divisi}</p>
+
+              {/* Diulang di sini, bukan hanya di barisnya. Inilah detik
+                  terakhir sebelum orangnya punya baris users, dan tombol
+                  hijau di bawah gampang ditekan tanpa membaca ulang. */}
+              <PenandaNik check={menyetujui.nik_check} />
             </div>
 
             <label className="block text-sm font-bold text-slate-700 mb-1">Role</label>

@@ -40,6 +40,41 @@ const kirim = async <T>(
 // Antrean pendaftaran
 // =========================================================================
 
+/**
+ * Hasil pemeriksaan NIK satu pendaftar -- khusus untuk mata admin.
+ *
+ * Datang dari GET /api/registrations, yang dijaga role admin. Balasan untuk
+ * pendaftarnya sendiri (GET /api/auth/status) tidak memuat apa pun dari sini
+ * dan memang tidak boleh: pendaftar yang diberi tahu "NIK itu milik Budi"
+ * membuat formulir pendaftaran jadi alat memanen data karyawan.
+ *
+ * Isinya baru benar-benar terasa perlu sejak Lapis 1
+ * (REGISTRATION_REQUIRE_KNOWN_NIK) dimatikan: NIK apa pun yang belum terpakai
+ * bisa masuk antrean, termasuk salah ketik, jadi yang menyaring sekarang admin.
+ */
+export interface NikCheck {
+  /**
+   * User aktif yang sudah memakai NIK ini, null kalau NIK-nya bebas.
+   *
+   * Kalau terisi, menyetujui pendaftaran itu akan GAGAL -- users.nik bertipe
+   * UNIQUE di database. Jadi ini praktis selalu berarti tolak.
+   */
+  taken_by: { name: string; email: string; role: string } | null;
+
+  /**
+   * Pendaftar LAIN di antrean tunggu yang memakai NIK sama. Yang disetujui
+   * lebih dulu menang; yang kedua akan gagal dengan alasan yang sama.
+   */
+  queued_by: { name: string; email: string }[];
+
+  /**
+   * Ada jejaknya di tech_logs atau di daftar izin NIK. false berarti sistem
+   * tidak punya catatan apa pun atas NIK ini -- persis yang dulu ditolak
+   * Lapis 1.
+   */
+  known: boolean;
+}
+
 export interface RegistrationRequest {
   uid: string;
   email: string;
@@ -47,6 +82,11 @@ export interface RegistrationRequest {
   nik: string;
   divisi: string;
   requested_at: string | null;
+  /**
+   * Opsional supaya frontend yang lebih baru tetap jalan di atas backend yang
+   * belum diperbarui: yang hilang cuma penandanya, bukan seluruh tabel.
+   */
+  nik_check?: NikCheck;
   /** Ketiganya hanya ada pada daftar yang sudah ditolak. */
   rejected_at?: string | null;
   rejected_by_email?: string | null;
