@@ -253,13 +253,18 @@ cd deploy/build && python3 -m zipfile -c ../../../api.zip api
 `python3 -m zipfile`, bukan perintah `zip`, karena `zip` sering tidak
 terpasang di WSL — dan modul bawaan Python ini ikut menyertakan berkas
 berawalan titik, yang justru paling penting di sini. Hasilnya `api.zip` di
-akar repo, kira-kira 900 KB.
+akar repo: 363 berkas, 2,6 MB, terkemas jadi **439 KB**.
 
 Frontend menyusul dengan cara yang sama:
 
 ```bash
 cd Frontend/dist && python3 -m zipfile -c ../../log_activity.zip .
 ```
+
+Hasilnya 4 berkas, 638 KB — hampir seluruhnya bundle JS yang menyusut dari
+2,0 MB jadi 627 KB. Perhatikan satu bedanya dengan `api.zip`: berkas ini
+tidak membawa folder pembungkus, isinya langsung `index.html`, `assets/`,
+dan `.htaccess`.
 
 Lalu di server, lewat **hPanel → File Manager** (bukan FileZilla):
 
