@@ -129,6 +129,29 @@ final class RegistrationPolicy
             return true;
         }
 
+        return $this->nikDikenal($nik);
+    }
+
+    /**
+     * NIK ini punya jejak di sistem?
+     *
+     * Syarat Lapis 1, dipisah jadi method sendiri supaya bisa ditanya tanpa
+     * ikut menjalankan pemeriksaan lain. Dipakai dua kali dengan maksud yang
+     * berbeda: di nikBolehDipakai() untuk MENOLAK pendaftaran, dan di
+     * RegistrationController::index() hanya untuk MENANDAI baris antrean.
+     *
+     * Yang kedua itu justru paling berguna ketika Lapis 1 dimatikan -- saat itu
+     * jawaban false tidak lagi menghalangi siapa pun, dan satu-satunya yang
+     * bisa menindaklanjutinya adalah admin yang melihat antrean.
+     */
+    public function nikDikenal(string $nik): bool
+    {
+        $nik = trim($nik);
+
+        if ($nik === '') {
+            return false;
+        }
+
         return $this->allowlist->contains($nik) || $this->techLogs->nikPernahDipakai($nik);
     }
 

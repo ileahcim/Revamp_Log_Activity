@@ -1253,6 +1253,38 @@ yang paling ketat. Bisa dimatikan sendiri-sendiri, tanpa menyentuh kode atau
 database. Mematikan Lapis 1 **tidak** mematikan pemeriksaan NIK kembar; yang
 hilang hanya syarat "harus sudah dikenal".
 
+### Penanda NIK di tab Persetujuan
+
+Kalau Lapis 1 dimatikan, NIK apa pun yang belum terpakai bisa masuk antrean —
+termasuk salah ketik, dan termasuk NIK milik teknisi lama yang belum pernah
+login sehingga belum punya baris `users` untuk menghalanginya. Yang menyaring
+sekarang mata admin, jadi `GET /api/registrations` menempelkan `nik_check` di
+tiap baris:
+
+```json
+"nik_check": {
+  "taken_by":  { "name": "Budi Santoso", "email": "budi@…", "role": "atasan" },
+  "queued_by": [ { "name": "Dina", "email": "dina@…" } ],
+  "known": false
+}
+```
+
+| Isi | Arti | Di layar |
+|---|---|---|
+| `taken_by` | NIK sudah dipakai user aktif. Menyetujuinya **akan gagal** — `users.nik` UNIQUE | badge merah |
+| `queued_by` | pendaftar lain di antrean memakai NIK sama; yang disetujui duluan menang | badge kuning |
+| `known: false` | tidak ada jejak di `tech_logs` maupun daftar izin — persis yang dulu ditolak Lapis 1 | badge abu-abu |
+
+`taken_by` bisa terisi walaupun pendaftarannya dulu lolos: jarak antara
+mendaftar dan disetujui bisa berhari-hari, dan NIK bisa berpindah lewat User
+Management dalam rentang itu.
+
+Semuanya berhenti di endpoint ini, yang dijaga role admin. `GET
+/api/auth/status` — satu-satunya yang dibaca pendaftar sendiri — tidak memuat
+apa pun dari sini dan tidak boleh: pendaftar yang diberi tahu "NIK itu milik
+Budi" mengubah formulir pendaftaran jadi alat memanen data karyawan. Alasan
+yang sama membuat semua penolakan NIK memakai satu kalimat yang identik.
+
 ### Alur untuk atasan dan admin baru
 
 Mereka tidak punya jejak di `tech_logs`, jadi:

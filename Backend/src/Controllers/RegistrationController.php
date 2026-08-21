@@ -85,11 +85,137 @@ final class RegistrationController
 
         return ApiResponse::success(
             $response,
-            array_map([$this, 'tampilkan'], $baris),
+            $this->tandaiNik(array_map([$this, 'tampilkan'], $baris)),
             null,
             200,
             ['total' => count($baris), 'status' => $status]
         );
+    }
+
+    /**
+     * Menempelkan hasil pemeriksaan NIK ke tiap baris antrean.
+     *
+     * Khusus untuk mata admin. Endpoint ini dijaga RoleMiddleware admin, dan
+     * balasan untuk pendaftar sendiri (GET /api/auth/status) tidak melewati
+     * method ini sama sekali -- yang di sana tetap tidak menyebut apa pun
+     * tentang NIK atau orang lain. Perbedaan itu disengaja: pendaftar yang
+     * diberi tahu "NIK itu milik Budi" berarti formulir pendaftaran berubah
+     * jadi alat memanen data karyawan.
+     *
+     * Kenapa perlu: dengan REGISTRATION_REQUIRE_KNOWN_NIK=false, NIK apa pun
+     * yang belum terpakai bisa masuk antrean -- termasuk salah ketik, dan
+     * termasuk NIK milik teknisi lama yang belum pernah login sehingga belum
+     * punya baris users untuk menghalanginya. Yang dulu disaring Lapis 1
+     * sekarang disaring mata admin, dan mata itu perlu diberi tahu apa yang
+     * sedang dilihatnya.
+     *
+     * Tiga jawaban, masing-masing berdiri sendiri:
+     *
+     *   taken_by   NIK sudah dipakai user aktif. Menyetujuinya akan gagal --
+     *              users.nik UNIQUE -- jadi ini nyaris selalu berarti tolak.
+     *              Bisa terjadi walau pendaftarannya dulu lolos: jarak antara
+     *              mendaftar dan disetujui bisa berhari-hari, dan NIK bisa
+     *              berpindah lewat User Management dalam rentang itu.
+     *   queued_by  NIK yang sama sedang diantre pendaftar lain. Yang disetujui
+     *              duluan menang; yang kedua akan gagal.
+     *   known      Ada jejaknya di tech_logs atau di daftar izin NIK. false
+     *              berarti sistem tidak punya catatan apa pun atas NIK ini --
+     *              persis yang dulu ditolak Lapis 1.
+     *
+     * Biayanya dua query per baris. Antrean persetujuan berisi satuan baris,
+     * bukan ratusan, jadi ini ditukar dengan sengaja: menggabungkannya jadi
+     * satu query akan membuat method ini menyusun SQL sendiri, sesuatu yang
+     * seharusnya tinggal di Models.
+     *
+     * @param  list<array<string, mixed>> $rows hasil tampilkan()
+     * @return list<array<string, mixed>>
+     */
+    private function tandaiNik(array $rows): array
+    {
+        // Antrean tunggu selalu jadi pembanding, termasuk saat yang dibuka
+        // daftar "pernah ditolak": NIK-nya bisa saja sudah diantre orang lain
+        // sejak penolakan itu, dan itu justru perlu diketahui sebelum tombol
+        // "Boleh Daftar Lagi" ditekan.
+        $antrean = $this->registrations->pending();
+
+        foreach ($rows as $i => $baris) {
+            $nik = trim((string) ($baris['nik'] ?? ''));
+
+            $rows[$i]['nik_check'] = [
+                'taken_by'  => $this->pemilikNik($nik),
+                'queued_by' => $this->pengantreLain($nik, (string) ($baris['uid'] ?? ''), $antrean),
+                'known'     => $this->policy->nikDikenal($nik),
+            ];
+        }
+
+        return $rows;
+    }
+
+    /**
+     * User aktif yang sudah memakai NIK ini.
+     *
+     * Hanya nama, email, dan role yang ikut -- cukup untuk admin mengenali
+     * siapa, tanpa mengirim seluruh baris user ke layar yang tidak
+     * membutuhkannya.
+     *
+     * @return array{name: string, email: string, role: string}|null
+     */
+    private function pemilikNik(string $nik): ?array
+    {
+        if ($nik === '') {
+            return null;
+        }
+
+        $user = $this->users->findByNik($nik);
+
+        if ($user === null) {
+            return null;
+        }
+
+        return [
+            'name'  => (string) ($user['name'] ?? ''),
+            'email' => (string) ($user['email'] ?? ''),
+            'role'  => (string) ($user['role'] ?? ''),
+        ];
+    }
+
+    /**
+     * Pendaftar LAIN di antrean yang memakai NIK sama.
+     *
+     * Dirinya sendiri tidak dihitung, kalau tidak setiap baris akan menuduh
+     * dirinya kembar. Dibandingkan setelah trim dan huruf kecil, sepadan
+     * dengan cara RegistrationStore menyimpan dan mencocokkan NIK.
+     *
+     * @param  list<array<string, mixed>> $antrean
+     * @return list<array{name: string, email: string}>
+     */
+    private function pengantreLain(string $nik, string $uid, array $antrean): array
+    {
+        if ($nik === '') {
+            return [];
+        }
+
+        $kunci = mb_strtolower($nik);
+        $lain  = [];
+
+        foreach ($antrean as $baris) {
+            $uidLain = (string) ($baris['uid'] ?? '');
+
+            if ($uidLain === '' || $uidLain === $uid) {
+                continue;
+            }
+
+            if (mb_strtolower(trim((string) ($baris['nik'] ?? ''))) !== $kunci) {
+                continue;
+            }
+
+            $lain[] = [
+                'name'  => (string) ($baris['name'] ?? ''),
+                'email' => (string) ($baris['email'] ?? ''),
+            ];
+        }
+
+        return $lain;
     }
 
     /**
